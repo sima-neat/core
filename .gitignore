@@ -28,7 +28,8 @@ dist/
 # Editor / IDE
 .vscode/
 .idea/
-.claude/
+/.claude/*
+!/.claude/skills
 
 # OS junk
 .DS_Store

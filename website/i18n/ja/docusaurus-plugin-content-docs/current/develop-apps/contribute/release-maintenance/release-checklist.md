@@ -29,7 +29,7 @@ slug: /develop-apps/contribute/release-checklist
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
-   - `docs/develop-apps/contribute/release-checklist.md`
+   - `docs/develop-apps/contribute/release-maintenance/release-checklist.md`
 10. リリースメタデータが完了していること：
    - タグを付けるコミットの `deps/manifest.json` の `package-version` がリリースバージョンと一致していること（たとえば `v0.7.0` なら `0.7.0`）
    - 必要に応じて、`platform-version` が `deps/manifest.json` に更新されていること

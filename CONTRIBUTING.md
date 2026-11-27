@@ -1,129 +1,128 @@
-# Contributing to SiMa NEAT
+# Contributing to SiMa.ai Neat Core
 
-This repository follows a release-first workflow: `main` must stay releasable.
+## Start with the issue
 
-## Prerequisites
+Use the [bug report](.github/ISSUE_TEMPLATE/bug_report.md) or [feature request](.github/ISSUE_TEMPLATE/feature_request.md)
+template. Give a minimal failing case for a bug or the caller's use case for a
+feature. Redact credentials and customer data from inputs and logs.
 
-- Linux (Debian/Ubuntu) or macOS.
-- CMake 3.16+.
-- C++20 toolchain.
-- GStreamer development packages.
-- OpenCV 4 development packages.
-- Node.js 20+ for docs builds.
+For a feature that adds or changes a public API, changes a default, or shifts
+responsibility between components, record the design on the issue and get
+code-owner approval before implementation. Follow the
+[feature workflow](agents/skills/core-add-feature/SKILL.md).
 
-Bootstrap dependencies:
+For regular contributions, branch from and target current `develop`.
+Use focused commits with imperative subjects. Link the issue with `Fixes #<issue>`
+when the change resolves it, or `Refs #<issue>` for partial work.
+
+## Make the change
+
+Use a checkout inside the Ubuntu Palette SDK container for development and
+agent skills. Start with the [build guide](docs/develop-apps/contribute/build-test/build.md)
+and the [coding standard](docs/develop-apps/contribute/start-here/coding_standard.md).
+Core uses C++20, the `simaai::neat` namespace, and stable installed headers under
+`include/`. Keep include groups in the existing order.
+
+- Choose the simplest change that covers supported behavior. Reuse an existing
+  API, validator, or helper when it fits. If the decode type determines the output
+  format, derive it from the type and avoid a second setting.
+- Add guards and fallbacks for reachable failures. Check which callers can
+  bypass input validation, including PyNeat and supported older archives.
+  Preserve handling of real failures such as timeouts and teardown.
+- Keep comments short. Explain a constraint such as why a buffer must live through
+  a completion callback. Put investigation history and design tradeoffs in the PR.
+- Update existing docs when a reader needs new guidance. Follow the
+  [documentation policy](docs/develop-apps/contribute/start-here/coding_standard.md#documentation-obligations)
+  and update examples when API usage changes. `No docs update needed` is valid
+  when a fix restores documented behavior.
+
+Follow the coding standard for maintainer approval of breaking changes. When
+feasible, keep a deprecated API available for at least one release and give
+callers migration guidance. Check `abi-version` against `main` using the
+[release checklist](docs/develop-apps/contribute/release-maintenance/release-checklist.md)
+and describe the migration in the PR.
+
+## Validate the affected behavior
+
+Use the [test requirements](docs/develop-apps/contribute/build-test/test_requirements.md)
+to select the checks. Use `build.sh` to prepare Core and its matching dependencies.
+
+| Change | Evidence to include |
+| --- | --- |
+| Runtime bug | The failing case, the regression that now passes, and the target/package for device behavior |
+| Public API or PyNeat | Compile coverage for supported C++ usage and relevant `python/tests` coverage for Python behavior |
+| Test or fixture update | The affected test passes on the intended target with the chosen fixture |
+| CI test selection | The named test ran and passed in the intended job, including any applicable DevKit lane |
+| Test removed from a job | The job no longer selects the test and the remaining tests pass |
+| Model archive handling | Contract tests and the [model archive validation gate](scripts/ci/run_model_archive_security_gate.sh) |
+| Install or performance | The applicable [install smoke](scripts/ci/run_install_smoke.sh) or [performance gate](scripts/ci/run_perf_regression_gate.sh) result |
+| Published documentation | The applicable localization checks, docs build, and strict link check |
+
+Report commands and results, and name any checks that remain unverified. A test
+that was selected but skipped is unverified. Fix crashes, use-after-free, and
+data races on the current branch. A failed
+[crash/correctness gate](scripts/ci/run_crash_correctness_gate.sh) blocks push or merge.
+
+### Match the CI formatter
+
+Code Hygiene uses the preinstalled `clang-format-18` from the pinned Ubuntu 24.04
+image. Find the exact version in the job's **Verify preinstalled code hygiene tools**
+log and compare it with `clang-format --version` in the SDK container. The Ubuntu
+24.04 `clang-format` package provides the distro formatter. Install it with
+`sudo apt-get install clang-format` if needed. If a different installation
+takes precedence, put `/usr/bin` first on `PATH` for the format check.
+
+Use the PR's target branch for these checks. The commands below use `develop`.
 
 ```bash
-./build.sh --install-deps-only
+git fetch origin develop
+bash scripts/check_format.sh --changed-only --base-ref origin/develop
+bash scripts/check_cmake_format.sh --changed-only --base-ref origin/develop
+bash scripts/check_duplicate_includes.sh --changed-only --base-ref origin/develop
 ```
 
-## Local Setup
+Optionally install the [local Git hooks](scripts/dev/install_hooks.sh) in your
+checkout to check staged files and run the pre-push crash/correctness gate.
 
-```bash
-# core library only
-./build.sh --dev-only
+### Verify docs and translations
 
-# full build
-./build.sh --all --clean --no-doc
-```
+Read the changed docs and verify the instructions against supported behavior
+before marking the PR ready.
 
-## Coding Standards
+For changes covered by the [localization guide](website/i18n/README.md), update
+the affected translations in every supported locale in the same PR. AI can
+help draft translations. Verify them against the updated source before updating
+their source hashes. For a generated tutorial, update the tutorial-owned
+translations and hashes at the source. Run
+`bash scripts/ci/check_documentation_localization.sh` and the relevant docs build
+and [link check](scripts/ci/check_docs_links.sh).
 
-- Public API must use canonical naming from `docs/develop-apps/contribute/start-here/naming.md`.
-- C++ namespace is `simaai::neat`.
-- Core runtime types are `Model`, `Graph`, and `Run`.
-- Keep source headers/implementation paths coherent (no internal headers in `include/`).
-- C++ target baseline is C++20.
+## Prepare the PR
 
-Run formatting/hygiene checks locally before pushing:
+Fill in the [PR template](.github/PULL_REQUEST_TEMPLATE.md) with the issue,
+reason for the change, risk, validation, and any API, ABI, migration, or docs
+impact. After implementation, tests, and docs edits, review the full diff against
+the PR's target branch using [core-review-pr](agents/skills/core-review-pr/SKILL.md).
+You can follow the skill manually. Address applicable findings, check the
+self-review box, and add one sentence about what changed, or write `No findings`.
+Repeat after a substantial rewrite. Resolve reviewer findings and check the
+required CI results before merging.
 
-```bash
-bash scripts/check_format.sh --changed-only
-bash scripts/check_cmake_format.sh --changed-only
-bash scripts/check_duplicate_includes.sh --changed-only
-```
+[AGENTS.md](AGENTS.md) maps tasks to the Core skills in `agents/skills/`.
+The committed `.agents/skills` and `.claude/skills` symlinks point to that
+directory for Codex and Claude Code. Claude Code imports AGENTS.md through
+CLAUDE.md.
 
-## Test Tiers
+## Before releasing
 
-Run the minimum tier required by your change:
-
-- Runtime/library code (`src/`, `include/`):
-  - `ctest --test-dir build/tests --output-on-failure`
-  - `bash scripts/ci/run_crash_correctness_gate.sh`
-- Examples/tutorial wiring:
-  - `ctest --test-dir build/tutorials --output-on-failure`
-- Docs or naming changes:
-  - `bash scripts/ci/check_naming_and_conflicts.sh`
-  - `DOCS_STRICT_LINKS=1 npm --prefix website run build`
-- Repo hygiene / release policy changes:
-  - `bash scripts/ci/check_artifacts.sh`
-  - `bash scripts/ci/check_release_policy.sh`
-- Model-archive/security changes:
-  - `bash scripts/ci/run_model_archive_security_gate.sh`
-- Packaging/install changes:
-  - `bash scripts/ci/run_install_smoke.sh`
-- Performance or long-run stability changes:
-  - `bash scripts/ci/run_perf_regression_gate.sh`
-
-Install local hooks once per clone:
-
-```bash
-bash scripts/dev/install_hooks.sh
-```
-
-Installed hooks:
-
-- `pre-commit`: formatting/CMake/include-hygiene checks on changed files.
-- `pre-push`: formatting/CMake/include-hygiene checks on changed files + crash/correctness gate.
-
-## Crash and Correctness Policy
-
-- `Crash/segfault/use-after-free/data race = immediate fix on current branch`.
-- `No push if local crash/correctness gate fails`.
-- `No merge if CI crash/correctness gate fails`.
-- Do not defer crash fixes behind waivers, skip lists, or release exceptions.
-
-## Issues
-
-Use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md) for defects
-and the [feature request template](.github/ISSUE_TEMPLATE/feature_request.md)
-for proposed improvements. Complete the relevant sections and mark others as
-not applicable. Include a minimal reproduction for bugs and an application use
-case for features; redact secrets and customer data from examples and logs.
-
-## Commit and PR Standards
-
-- Keep commits focused and scoped.
-- Use imperative subject lines (for example: `Add release gate policy checks`).
-- Use the [pull request template](.github/PULL_REQUEST_TEMPLATE.md), target
-  `develop`, and link completed issues with `Fixes #<issue>`.
-- Every PR must include:
-  - change type,
-  - risk assessment,
-  - test evidence,
-  - docs impact,
-  - migration impact.
-- Follow the [documentation policy](docs/develop-apps/contribute/start-here/coding_standard.md#documentation-obligations);
-  `No docs update needed` is valid when existing guidance remains accurate and no new concept or workflow needs explanation.
-
-## API Deprecation Process
-
-When changing public API in `include/*`:
-
-1. Keep old symbol available for at least one release cycle when feasible.
-2. Mark deprecations with explicit migration guidance.
-3. Update a dedicated migration page under `docs/develop-apps/` when the change needs one.
-4. Update examples/tutorials to canonical replacements.
-5. Include downstream migration impact in the PR template.
-
-## Release Hygiene
-
-Releases must follow `docs/develop-apps/contribute/release-maintenance/release-checklist.md` and pass the required checks it lists.
-
-Before merging `develop` into `main`, check that production docs will build. Production docs import each sibling repository's `main`, while push-triggered staging builds import their `develop`. Run the staging-only check on the commit you will promote:
+Follow the [release checklist](docs/develop-apps/contribute/release-maintenance/release-checklist.md).
+Before promoting `develop` to `main`, validate the production docs inputs on the
+Core commit you will promote. Use the staging workflow with the sibling repos'
+`main` branches:
 
 ```bash
 gh workflow run "Vulcan Docs" --repo sima-neat/core --ref develop -f sibling_branch=main
 ```
 
-A pass predicts the production docs build when the same Core commit is promoted, no sibling `main` changes before the production deploy (compare the commits in the `[autodoc] ... using` log lines), and `git diff --stat origin/develop...origin/main` prints nothing.
+Check that the promoted Core tree and the sibling SHAs in the `[autodoc]`
+log lines match the versions tested in staging.

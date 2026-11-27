@@ -29,7 +29,7 @@ slug: /develop-apps/contribute/release-checklist
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
-   - `docs/develop-apps/contribute/release-checklist.md`
+   - `docs/develop-apps/contribute/release-maintenance/release-checklist.md`
 10. 發布元資料已完成：
    - 要加上標籤的提交中，`deps/manifest.json` 的 `package-version` 等於發布版本，例如 `v0.7.0` 對應 `0.7.0`
    - `platform-version` 在 `deps/manifest.json` 中更新（如果需要）

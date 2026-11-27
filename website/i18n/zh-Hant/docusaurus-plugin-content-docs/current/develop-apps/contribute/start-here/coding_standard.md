@@ -43,7 +43,7 @@ bash scripts/check_duplicate_includes.sh --changed-only
 
 在合併破壞性 API 變更之前：
 
-1. 在 PR 描述中的專用 `Breaking API Change` 區段中記錄變更。
+1. 在 PR 說明的 `API, ABI, and migration` 區段記錄變更。
 2. 包含影響分析：受影響的標頭檔/符號、預期的下游影響以及遷移步驟。
 3. 包含版本控制/發布意圖（何時允許發布此變更）。
 4. 在相同的變更集中更新檔案和範例，以反映新的 API。

@@ -29,7 +29,7 @@ slug: /develop-apps/contribute/release-checklist
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
-   - `docs/develop-apps/contribute/release-checklist.md`
+   - `docs/develop-apps/contribute/release-maintenance/release-checklist.md`
 10. 릴리스 메타데이터가 완료되었습니다.
    - 태그를 지정할 커밋의 `deps/manifest.json`에 있는 `package-version`이 릴리스 버전과 같습니다. 예를 들어 `v0.7.0`이면 `0.7.0`입니다.
    - `platform-version`가 필요한 경우 `deps/manifest.json`에 업데이트되었습니다.

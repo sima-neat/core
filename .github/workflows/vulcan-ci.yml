@@ -181,6 +181,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Check contributor skill links
+        run: python3 scripts/ci/check_contributor_skills.py
+
       - name: Install native build-tooling prerequisites
         run: |
           sudo apt-get update
@@ -342,6 +345,7 @@ jobs:
           HYGIENE_REQUIRE_PREINSTALLED: "1"
         run: |
           ./scripts/ci/install_code_hygiene_deps.sh
+          clang-format --version
 
       - name: Verify host C++ headers for clang-tidy
         run: |

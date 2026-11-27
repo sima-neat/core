@@ -35,7 +35,7 @@ A release is blocked unless all conditions below are true:
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
-   - `docs/develop-apps/contribute/release-checklist.md`
+   - `docs/develop-apps/contribute/release-maintenance/release-checklist.md`
 10. Release metadata is complete:
    - `package-version` in `deps/manifest.json` at the tagged commit equals the release version, for example `0.7.0` for `v0.7.0`
    - `platform-version` updated in `deps/manifest.json` when required

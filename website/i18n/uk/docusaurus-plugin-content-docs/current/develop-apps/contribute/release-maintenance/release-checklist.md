@@ -29,7 +29,7 @@ slug: /develop-apps/contribute/release-checklist
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
-   - `docs/develop-apps/contribute/release-checklist.md`
+   - `docs/develop-apps/contribute/release-maintenance/release-checklist.md`
 10. Метадані випуску повні:
    - `package-version` у `deps/manifest.json` на коміті з тегом дорівнює версії випуску, наприклад `0.7.0` для `v0.7.0`
    - `platform-version` оновлено в `deps/manifest.json`, коли це потрібно

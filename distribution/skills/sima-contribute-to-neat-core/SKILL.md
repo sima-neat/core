@@ -11,8 +11,8 @@ For deeper architecture notes distilled from the architect-level PDF, read `refe
 
 ## First Pass
 
-1. Read the local guardrails first:
-   - `AGENTS.md`
+1. From the Core checkout, read `AGENTS.md` and use its task-to-skill index to
+   find the repo-specific workflow. Read the rules relevant to the change:
    - `docs/develop-apps/contribute/start-here/coding_standard.md`
    - `docs/develop-apps/contribute/build-test/test_requirements.md`
    - `docs/develop-apps/contribute/start-here/architecture.md`
