@@ -2217,15 +2217,15 @@ if (NOT async_yolov8_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 add_pipeline_test_long(
-  async_yolov11_pose_bf16_tput_test
-  e2e_pipelines/obj_detection/async_yolov11_pose_bf16_tput_test.cpp
+  async_yolo26n_pose_w16a16_tput_test
+  e2e_pipelines/obj_detection/async_yolo26n_pose_w16a16_tput_test.cpp
   e2e_pipelines/e2e_utils.cpp
   ARGS ${CMAKE_SOURCE_DIR}
 )
-if (NOT async_yolov11_pose_bf16_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST async_yolov11_pose_bf16_tput_test APPEND PROPERTY
+if (NOT async_yolo26n_pose_w16a16_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST async_yolo26n_pose_w16a16_tput_test APPEND PROPERTY
     LABELS "e2e;obj_detection;pose;smoke;modalix-only")
-  set_property(TEST async_yolov11_pose_bf16_tput_test APPEND PROPERTY
+  set_property(TEST async_yolo26n_pose_w16a16_tput_test APPEND PROPERTY
     RESOURCE_LOCK "perf-device;accelerator-device")
 endif()
 
