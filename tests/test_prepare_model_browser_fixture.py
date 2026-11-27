@@ -1,11 +1,13 @@
 import importlib.util
 import io
 import json
+import os
 import stat
 import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 import zipfile
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -72,23 +74,39 @@ class PrepareModelBrowserFixtureTests(unittest.TestCase):
         self.assertIn("run_id=run-1", stderr)
         self.assertIn("sha256=abc123", stderr)
 
-    def test_cli_runs_with_an_empty_home_that_is_not_the_real_one(self):
+    def home_reporting_cli(self, report: Path) -> str:
         zip_path = write_zip(self.tmp / "dl" / "resnet_50_w8a8_default.zip",
                              {"resnet_50_w8a8_mpk.tar.gz": MPK})
-        report = self.tmp / "home-report.json"
-        cli = fake_cli(self.tmp, f"""\
-            import os
+        return fake_cli(self.tmp, f"""            import os
             home = os.environ["HOME"]
             with open({str(report)!r}, "w") as f:
                 json.dump({{"home": home, "entries": os.listdir(home)}}, f)
             print(json.dumps({{"path": {str(zip_path)!r}}}))
             """)
-        code, _, stderr = self.run_main(cli)
+
+    def test_on_github_actions_the_cli_runs_with_an_empty_home(self):
+        report = self.tmp / "home-report.json"
+        cli = self.home_reporting_cli(report)
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+            code, _, stderr = self.run_main(cli)
         self.assertEqual(code, 0, stderr)
         seen = json.loads(report.read_text())
         self.assertEqual(seen["entries"], [])
         self.assertNotEqual(Path(seen["home"]).resolve(), Path.home().resolve())
         self.assertIn(f"empty HOME={seen['home']}", stderr)
+
+    def test_outside_github_actions_the_cli_keeps_the_user_home(self):
+        report = self.tmp / "home-report.json"
+        cli = self.home_reporting_cli(report)
+        user_home = self.tmp / "user-home"
+        user_home.mkdir()
+        env = {k: v for k, v in os.environ.items() if k != "GITHUB_ACTIONS"}
+        env["HOME"] = str(user_home)
+        with mock.patch.dict(os.environ, env, clear=True):
+            code, _, stderr = self.run_main(cli)
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(Path(json.loads(report.read_text())["home"]), user_home)
+        self.assertNotIn("empty HOME", stderr)
 
     def test_missing_mpk_names_what_the_zip_holds(self):
         cli = self.cli_returning({"licenses/LICENSE": b"x", "resnet_50_w8a16_mpk.tar.gz": b"y"})
