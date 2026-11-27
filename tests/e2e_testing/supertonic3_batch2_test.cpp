@@ -35,7 +35,7 @@ using Inputs = std::vector<std::vector<float>>;
 constexpr int kSlots = 2;
 constexpr int kTimeoutMs = 120000;
 // The vector estimator's public inputs: noisy latent, text embedding, style_ttl, style_key,
-// latent mask, text mask, current step and total step, all float32 NHWC.
+// latent mask, text mask, time_sinusoidal and rope_tables, all float32 NHWC.
 const std::vector<Shape> kVectorInputs = {{2, 1, 192, 144}, {2, 1, 192, 256}, {2, 1, 50, 256},
                                           {2, 1, 50, 256},  {2, 1, 192, 1},   {2, 1, 1, 192},
                                           {2, 1, 1, 64},    {2, 1, 192, 128}};
@@ -47,6 +47,8 @@ constexpr std::size_t kStyleTtlInput = 2;
 constexpr std::size_t kStyleKeyInput = 3;
 constexpr std::size_t kLatentMaskInput = 4;
 constexpr std::size_t kTextMaskInput = 5;
+constexpr std::size_t kTimeInput = 6;
+constexpr std::size_t kRopeInput = 7;
 // The masks mark the first 120 positions of each slot as valid.
 constexpr std::size_t kValidPositions = 120;
 
@@ -280,7 +282,18 @@ int main(int argc, char** argv) {
               float32_spec(vocoder_out[0]),
           "vocoder has one float32 output [1,1,1152,512]");
 
-    const Inputs base = make_inputs(1);
+    // As in one guidance step: both slots share the noisy latent, the timestep and the rope tables,
+    // and differ in the text and style inputs (slot 0 conditional, slot 1 unconditional). The masks
+    // are already the same in both slots.
+    const Inputs base = [] {
+      Inputs inputs = make_inputs(1);
+      for (std::size_t idx : {kLatentInput, kTimeInput, kRopeInput}) {
+        std::vector<float>& values = inputs[idx];
+        const std::size_t n = values.size() / kSlots;
+        std::copy_n(values.begin(), n, values.begin() + static_cast<std::ptrdiff_t>(n));
+      }
+      return inputs;
+    }();
     const Inputs other = make_inputs(2);
 
     auto runner = vector.build(to_tensors(base));
@@ -360,15 +373,19 @@ int main(int argc, char** argv) {
     }
     runner.close();
 
-    // One guided update of the slot 0 latent from the conditional (slot 0) and unconditional
-    // (slot 1) outputs, then the vocoder on the result.
+    // One guided update of the shared latent from the conditional (slot 0) and unconditional
+    // (slot 1) velocities, masked by latent_mask so padded frames enter the vocoder as zeros, then
+    // the vocoder on the result (models/supertonic_3 README, "Between the components", steps 6-8).
     {
       const std::vector<float> latent0 = slot(base[kLatentInput], 0);
+      const std::vector<float> frame_mask = slot(base[kLatentMaskInput], 0);
       const std::vector<float> cond = slot(a, 0);
       const std::vector<float> uncond = slot(a, 1);
+      const std::size_t per_frame = latent0.size() / frame_mask.size();
       std::vector<float> latent(latent0.size());
       for (std::size_t i = 0; i < latent.size(); ++i)
-        latent[i] = latent0[i] + (4.0f * cond[i] - 3.0f * uncond[i]) / 8.0f;
+        latent[i] =
+            (latent0[i] + (4.0f * cond[i] - 3.0f * uncond[i]) / 8.0f) * frame_mask[i / per_frame];
       const simaai::neat::Tensor latent_tensor = simaai::neat::Tensor::from_vector(
           latent, kVocoderInput, simaai::neat::TensorMemory::EV74);
       auto vocoder_runner = vocoder.build(simaai::neat::TensorList{latent_tensor});
