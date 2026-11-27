@@ -178,6 +178,25 @@ def test_fixtures_are_prepared_only_for_selected_tests(monkeypatch):
     assert preset['SIMA_RF_DETR_DECODER_TAR'] == '/d.tar.gz'
 
 
+def test_model_browser_suite_prepares_only_selected_packages(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(partitioner, 'prepare_fixture',
+                        lambda model_id, variant, output: calls.append((model_id, variant, output)))
+    env = {}
+    partitioner.prepare_model_browser_suite({'model_browser_contract_yolox_s', 'other'}, env, tmp_path)
+    assert calls == [('yolox_s', 'w8a8', tmp_path / 'model-browser-suite')]
+    assert env['SIMA_MODEL_BROWSER_DIR'] == str(tmp_path / 'model-browser-suite')
+
+    calls.clear()
+    preset = {'SIMA_MODEL_BROWSER_DIR': '/preset'}
+    partitioner.prepare_model_browser_suite(set(partitioner.MODEL_BROWSER_SUITE), preset, tmp_path)
+    assert calls == [] and preset == {'SIMA_MODEL_BROWSER_DIR': '/preset'}
+
+    empty = {}
+    partitioner.prepare_model_browser_suite({'other'}, empty, tmp_path)
+    assert calls == [] and empty == {}
+
+
 def test_real_ctest_partition_executes_all_selected_tests(tmp_path):
     # Uses harmless host Python registrations; no aarch64 binary is executed.
     marker = tmp_path / 'executed'

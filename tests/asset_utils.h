@@ -12,25 +12,11 @@
 #include <system_error>
 #include <vector>
 
-#include <fcntl.h>
-#include <sys/file.h>
 #include <unistd.h>
 
 namespace sima_test {
 
 namespace fs = std::filesystem;
-
-#ifndef SIMA_NEAT_MODELZOO_VERSION_STRING
-#define SIMA_NEAT_MODELZOO_VERSION_STRING ""
-#endif
-
-inline std::string modelzoo_version() {
-  if (const char* override_version = std::getenv("SIMA_MODELZOO_VERSION");
-      override_version != nullptr && override_version[0] != '\0') {
-    return override_version;
-  }
-  return SIMA_NEAT_MODELZOO_VERSION_STRING;
-}
 
 inline std::string shell_quote(const std::string& s) {
   std::string out = "'";
@@ -61,43 +47,6 @@ inline bool move_to_tmp(const fs::path& src, const fs::path& dst) {
   return true;
 }
 
-class ScopedFileLock {
-public:
-  explicit ScopedFileLock(const fs::path& path) {
-    std::error_code ec;
-    fs::create_directories(path.parent_path(), ec);
-    if (ec) {
-      throw std::runtime_error("failed to create lock directory " + path.parent_path().string() +
-                               ": " + ec.message());
-    }
-    fd_ = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
-    if (fd_ < 0) {
-      throw std::runtime_error("failed to open lock file " + path.string());
-    }
-    while (::flock(fd_, LOCK_EX) != 0) {
-      if (errno != EINTR) {
-        const int err = errno;
-        (void)::close(fd_);
-        fd_ = -1;
-        throw std::runtime_error("failed to lock " + path.string() + ": " + std::to_string(err));
-      }
-    }
-  }
-
-  ScopedFileLock(const ScopedFileLock&) = delete;
-  ScopedFileLock& operator=(const ScopedFileLock&) = delete;
-
-  ~ScopedFileLock() {
-    if (fd_ >= 0) {
-      (void)::flock(fd_, LOCK_UN);
-      (void)::close(fd_);
-    }
-  }
-
-private:
-  int fd_ = -1;
-};
-
 inline bool is_usable_regular_file(const fs::path& path) {
   if (path.empty())
     return false;
@@ -125,26 +74,14 @@ inline bool has_tar_gz_suffix(const fs::path& path) {
 
 // Defensive: returns false when `tar -tzf` cannot list the archive (file is
 // truncated, gzip CRC is wrong, content is HTML from a failed download, etc.).
-// resolve_modelzoo_tar() relies on this to reject a corrupt cached archive
-// that `is_usable_regular_file` (size > 0 only) lets through, which would
-// otherwise surface as ModelPack "tar listing failed".
+// It rejects a corrupt cached archive that `is_usable_regular_file` (size > 0
+// only) lets through, which would otherwise surface as ModelPack "tar listing
+// failed".
 inline bool is_listable_tar_gz(const fs::path& tar_path) {
   if (!is_usable_regular_file(tar_path) || !has_tar_gz_suffix(tar_path))
     return false;
   const std::string cmd = "tar -tzf " + shell_quote(tar_path.string()) + " >/dev/null 2>&1";
   return std::system(cmd.c_str()) == 0;
-}
-
-// Remove a corrupt cached tar so the next resolve attempt re-downloads.
-inline void purge_unlistable_tar_gz(const fs::path& tar_path) {
-  if (tar_path.empty())
-    return;
-  std::error_code ec;
-  if (!fs::is_regular_file(tar_path, ec) || ec)
-    return;
-  if (is_listable_tar_gz(tar_path))
-    return;
-  fs::remove(tar_path, ec);
 }
 
 inline bool tar_contains_strict_mpk_json(const fs::path& tar_path) {
@@ -415,22 +352,6 @@ inline bool ensure_writable_directory(const fs::path& dir) {
   return true;
 }
 
-inline int run_modelzoo_get_noninteractive(const std::string& model_name,
-                                           const fs::path& download_dir = {}) {
-  std::string cmd;
-  if (!download_dir.empty()) {
-    // The CLI writes relative to its working directory. Change it in the child only.
-    cmd = "cd " + shell_quote(fs::absolute(download_dir).string()) + " && ";
-  }
-  cmd += "SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo";
-  const std::string version = modelzoo_version();
-  if (!version.empty()) {
-    cmd += " -v " + shell_quote(version);
-  }
-  cmd += " get " + shell_quote(model_name);
-  return std::system(cmd.c_str());
-}
-
 inline bool download_file(const std::string& url, const fs::path& out_path) {
   if (is_usable_regular_file(out_path))
     return true;
@@ -551,134 +472,6 @@ inline std::string resolve_yolov8s_tar(const fs::path& = {}) {
   std::cerr << "SIMA_YOLO_TAR is not set. Set it, or SIMA_MODEL_TAR, to the "
                "yolov8s_w8a8_mpk.tar.gz from 'sima-cli models download --id yolov8s "
                "--variant w8a8'.\n";
-  return "";
-}
-
-inline std::string resolve_modelzoo_tar(const std::string& model_name,
-                                        const fs::path& root_in = {}) {
-  const fs::path root = default_asset_root(root_in);
-  const fs::path tmp_dir = root / "tmp";
-  std::error_code ec;
-  fs::create_directories(tmp_dir, ec);
-
-  auto append_unique = [](std::vector<std::string>& out, const std::string& v) {
-    if (v.empty())
-      return;
-    for (const auto& existing : out) {
-      if (existing == v)
-        return;
-    }
-    out.push_back(v);
-  };
-
-  const std::string base = [&]() {
-    const std::size_t pos = model_name.find_last_of('/');
-    return (pos == std::string::npos) ? model_name : model_name.substr(pos + 1);
-  }();
-
-  std::string flat = model_name;
-  for (char& c : flat) {
-    if (c == '/')
-      c = '_';
-  }
-  std::string flat_dash = model_name;
-  for (char& c : flat_dash) {
-    if (c == '/')
-      c = '-';
-  }
-
-  std::vector<std::string> stems;
-  append_unique(stems, base);
-  append_unique(stems, flat);
-  append_unique(stems, flat_dash);
-
-  const std::size_t initial = stems.size();
-  for (std::size_t i = 0; i < initial; ++i) {
-    std::string alt = stems[i];
-    bool changed = false;
-    for (char& c : alt) {
-      if (c == '_') {
-        c = '-';
-        changed = true;
-      }
-    }
-    if (changed)
-      append_unique(stems, alt);
-  }
-
-  std::vector<std::string> names;
-  names.reserve(stems.size() * 3);
-  for (const auto& stem : stems) {
-    append_unique(names, stem + "_mpk.tar.gz");
-    append_unique(names, stem + "-mpk.tar.gz");
-    append_unique(names, stem + ".tar.gz");
-  }
-
-  const fs::path local = tmp_dir / (base + "_mpk.tar.gz");
-  const ScopedFileLock lock(local.string() + ".lock");
-  // Only validate listability for the *cached* tmp tar (the path that
-  // gets handed back to callers and consumed by ModelPack). Candidates
-  // discovered via the search loop below may be unit-test fixtures
-  // containing dummy payloads — see unit_asset_utils_readable_model_tar_test.
-  purge_unlistable_tar_gz(local);
-  if (is_usable_regular_file(local))
-    return local.string();
-
-  auto try_candidate = [&](const fs::path& candidate) -> std::string {
-    if (!is_usable_regular_file(candidate))
-      return "";
-    if (candidate == local)
-      return local.string();
-    if (move_to_tmp(candidate, local))
-      return local.string();
-    return "";
-  };
-
-  const char* home = std::getenv("HOME");
-  const fs::path home_path = home ? fs::path(home) : fs::path();
-  const std::vector<fs::path> search_dirs = {
-      tmp_dir,
-      root,
-      fs::current_path(),
-      fs::temp_directory_path(),
-      home_path / ".simaai",
-      home_path / ".simaai" / "modelzoo",
-      home_path / ".sima" / "modelzoo",
-      "/data/simaai/modelzoo",
-  };
-
-  for (const auto& dir : search_dirs) {
-    if (dir.empty())
-      continue;
-    for (const auto& name : names) {
-      const std::string found = try_candidate(dir / name);
-      if (!found.empty())
-        return found;
-    }
-  }
-
-  if (run_modelzoo_get_noninteractive(model_name) != 0)
-    return "";
-
-  // Post-download validation: the modelzoo path historically produces
-  // partial/corrupt tarballs that pass is_usable_regular_file (size > 0)
-  // but fail `tar -tzf`. Purge those so a future retry isn't poisoned.
-  if (is_usable_regular_file(local)) {
-    if (is_listable_tar_gz(local))
-      return local.string();
-    purge_unlistable_tar_gz(local);
-  }
-
-  for (const auto& dir : search_dirs) {
-    if (dir.empty())
-      continue;
-    for (const auto& name : names) {
-      const std::string found = try_candidate(dir / name);
-      if (!found.empty())
-        return found;
-    }
-  }
-
   return "";
 }
 
