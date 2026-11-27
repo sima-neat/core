@@ -1265,6 +1265,17 @@ if (NOT detr_resnet50_multi_output_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST detr_resnet50_multi_output_test APPEND PROPERTY LABELS "e2e;obj_detection")
 endif()
 
+# Two-component RF-DETR: backbone, top 300 proposals on the CPU, decoder, then CPU decode. CI
+# prepares the Model Browser rf_detr_small w8a16_w16a16 backbone and decoder MPKs.
+add_pipeline_test(
+  rf_detr_small_pipeline_test
+  e2e_testing/rf_detr_small_pipeline_test.cpp
+)
+
+if (NOT rf_detr_small_pipeline_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST rf_detr_small_pipeline_test APPEND PROPERTY LABELS "e2e;obj_detection")
+endif()
+
 add_pipeline_test_long(
   modelzoo_bulk_models_test
   e2e_testing/modelzoo_bulk_models_test.cpp
@@ -2838,6 +2849,7 @@ foreach(test
     modelzoo_bulk_models_test
     resnet18_async_consumer_visibility_test
     detr_resnet50_multi_output_test
+    rf_detr_small_pipeline_test
     preproc_dynamic_renegotiate_test
     graph_migration_legacy_hybrid_graph_stage_model_test
     graph_migration_legacy_yolov8_variant_route_matrix_test

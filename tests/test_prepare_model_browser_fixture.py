@@ -46,12 +46,13 @@ class PrepareModelBrowserFixtureTests(unittest.TestCase):
         self.tmp = Path(temp.name)
         self.out = self.tmp / "out"
 
-    def run_main(self, sima_cli: str) -> tuple[int, str, str]:
+    def run_main(self, sima_cli: str, model_id: str = "resnet_50", variant: str = "w8a8",
+                 extra: list[str] | None = None) -> tuple[int, str, str]:
         stdout, stderr = io.StringIO(), io.StringIO()
         with redirect_stdout(stdout), redirect_stderr(stderr):
             code = MODULE.main([
-                "--id", "resnet_50", "--variant", "w8a8", "--output", str(self.out),
-                "--sima-cli", sima_cli,
+                "--id", model_id, "--variant", variant, "--output", str(self.out),
+                "--sima-cli", sima_cli, *(extra or []),
             ])
         return code, stdout.getvalue(), stderr.getvalue()
 
@@ -59,6 +60,14 @@ class PrepareModelBrowserFixtureTests(unittest.TestCase):
         zip_path = write_zip(self.tmp / "dl" / "resnet_50_w8a8_default.zip", zip_members)
         info = {"path": str(zip_path), "run_id": "run-1", "sha256": "abc123"}
         return fake_cli(self.tmp, f"print(json.dumps({info!r}))\n")
+
+    def counting_cli(self, zip_members: dict[str, bytes]) -> tuple[str, Path]:
+        zip_path = write_zip(self.tmp / "dl" / "rf_detr_small_w8a8_w16a16_default.zip", zip_members)
+        calls = self.tmp / "calls"
+        info = {"path": str(zip_path), "run_id": "run-2", "sha256": "def456"}
+        body = (f"open({str(calls)!r}, 'a').write('download\\n')\n"
+                f"print(json.dumps({info!r}))\n")
+        return fake_cli(self.tmp, body), calls
 
     def test_selects_the_expected_mpk_and_logs_the_package(self):
         cli = self.cli_returning({
@@ -142,6 +151,43 @@ class PrepareModelBrowserFixtureTests(unittest.TestCase):
         code, _, stderr = self.run_main(cli)
         self.assertEqual(code, 1)
         self.assertIn("did not print JSON", stderr)
+
+    def test_components_come_from_one_download_in_argument_order(self):
+        cli, calls = self.counting_cli({
+            "rf_detr_small_w8a8_w16a16_backbone_mpk.tar.gz": b"backbone",
+            "rf_detr_small_w8a8_w16a16_decoder_mpk.tar.gz": b"decoder",
+        })
+        code, stdout, stderr = self.run_main(
+            cli, "rf_detr_small", "w8a8_w16a16",
+            ["--component", "decoder", "--component", "backbone"])
+        self.assertEqual(code, 0, stderr)
+        paths = [Path(line) for line in stdout.splitlines()]
+        self.assertEqual(paths, [
+            self.out / "rf_detr_small_w8a8_w16a16_decoder_mpk.tar.gz",
+            self.out / "rf_detr_small_w8a8_w16a16_backbone_mpk.tar.gz",
+        ])
+        self.assertEqual([p.read_bytes() for p in paths], [b"decoder", b"backbone"])
+        self.assertEqual(calls.read_text().splitlines(), ["download"])
+
+    def test_missing_component_names_what_the_zip_holds(self):
+        cli, _ = self.counting_cli({
+            "rf_detr_small_w8a8_w16a16_backbone_mpk.tar.gz": b"backbone",
+            "rf_detr_small_w8a8_w16a16_decoder_mpk.tar.gz": b"decoder",
+        })
+        code, stdout, stderr = self.run_main(
+            cli, "rf_detr_small", "w8a8_w16a16", ["--component", "encoder"])
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn(
+            "has no rf_detr_small_w8a8_w16a16_encoder_mpk.tar.gz; MPKs in it: "
+            "rf_detr_small_w8a8_w16a16_backbone_mpk.tar.gz, "
+            "rf_detr_small_w8a8_w16a16_decoder_mpk.tar.gz", stderr)
+
+    def test_without_components_stdout_is_one_path(self):
+        cli = self.cli_returning({"resnet_50_w8a8_mpk.tar.gz": MPK})
+        code, stdout, stderr = self.run_main(cli)
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(stdout, f"{self.out / 'resnet_50_w8a8_mpk.tar.gz'}\n")
 
     def test_json_without_a_path_is_refused(self):
         cli = fake_cli(self.tmp, "print(json.dumps({'run_id': 'r'}))\n")

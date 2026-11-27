@@ -72,28 +72,42 @@ def partition(names, weights):
     return [sorted(b) for b in bins]
 
 
-# (variable, Model Browser id, variant, CTest names that read the variable).
+# (variable, Model Browser id, variant, CTest names that read it). A package with components maps
+# each component to its own variable; one download prepares all of them.
 FIXTURES = (
     ('SIMA_TEST_MLA_ONLY_MODEL', 'yolo26n', 'w8a8', {'model_execution_plan_test'}),
     ('SIMA_RESNET50_TAR', 'resnet_50', 'w8a8', RESNET50_TESTS),
     ('SIMA_RESNET18_TAR', 'resnet_18', 'w8a8', {'resnet18_async_consumer_visibility_test'}),
     ('SIMA_YOLO_TAR', 'yolov8s', 'w8a8', YOLOV8S_TESTS),
     ('SIMA_DETR_RESNET50_TAR', 'detr_resnet_50', 'w8a8_mixed', {'detr_resnet50_multi_output_test'}),
+    ({'backbone': 'SIMA_RF_DETR_BACKBONE_TAR', 'decoder': 'SIMA_RF_DETR_DECODER_TAR'},
+     'rf_detr_small', 'w8a16_w16a16', {'rf_detr_small_pipeline_test'}),
 )
 
 
-def prepare_fixture(model_id, variant, output):
-    return subprocess.check_output(
-        [sys.executable, str(ROOT / 'scripts/ci/prepare_model_browser_fixture.py'),
-         '--id', model_id, '--variant', variant, '--output', str(output)], text=True,
-        timeout=900).strip()
+def prepare_fixture(model_id, variant, output, components=()):
+    argv = [sys.executable, str(ROOT / 'scripts/ci/prepare_model_browser_fixture.py'),
+            '--id', model_id, '--variant', variant, '--output', str(output)]
+    for component in components:
+        argv += ['--component', component]
+    out = subprocess.check_output(argv, text=True, timeout=900).strip()
+    return out.splitlines() if components else out
 
 
 def prepare_selected_fixtures(selected, env, output):
-    """Prepare each fixture a selected test reads, unless its variable is already set."""
-    for var, model_id, variant, consumers in FIXTURES:
-        if consumers & set(selected) and not env.get(var):
-            env[var] = prepare_fixture(model_id, variant, output)
+    """Prepare each fixture a selected test reads, unless its variables are already set."""
+    for target, model_id, variant, consumers in FIXTURES:
+        if not consumers & set(selected):
+            continue
+        if isinstance(target, dict):
+            if all(env.get(var) for var in target.values()):
+                continue
+            paths = prepare_fixture(model_id, variant, output, components=tuple(target))
+            for var, path in zip(target.values(), paths):
+                if not env.get(var):
+                    env[var] = path
+        elif not env.get(target):
+            env[target] = prepare_fixture(model_id, variant, output)
 
 
 def main():

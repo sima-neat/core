@@ -111,6 +111,7 @@
     "codec_runtime_bad_url_diagnostics": 1.59,
     "codec_decode_accuracy_test": 2.5,
     "h265_decode_determinism_test": 6.93,
-    "detr_resnet50_multi_output_test": 20.0
+    "detr_resnet50_multi_output_test": 20.0,
+    "rf_detr_small_pipeline_test": 30.0
   }
 }
