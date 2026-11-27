@@ -49,8 +49,10 @@ contribution. Include staged and working changes for a local review and check
   Check that changed docs help a reader use the API or workflow and that required
   translations and source hashes match.
 - Check the original failing case, the regression result, and the relevant
-  package and device. For CI test selection, check the named test executed and
-  passed in the intended job. A selection log or skipped result is insufficient.
+  package and device. For CI test selection, confirm that cases the intended
+  job should run executed and passed. A selection log or skipped result is
+  insufficient. For a removed case, check that the job no longer selects it
+  and the remaining tests pass.
   For evidence from an earlier revision, check whether later changes affect
   what it proves. Run focused checks when practical and state what remains
   unverified.

@@ -6,7 +6,12 @@ Use the [bug report](.github/ISSUE_TEMPLATE/bug_report.md) or [feature request](
 template. Give a minimal failing case for a bug or the caller's use case for a
 feature. Redact credentials and customer data from inputs and logs.
 
-Create a topic branch from current `develop` and target `develop` in the PR.
+For a feature that adds or changes a public API, changes a default, or shifts
+responsibility between components, record the design on the issue and get
+code-owner approval before implementation. Follow the
+[feature workflow](agents/skills/core-add-feature/SKILL.md).
+
+For regular contributions, branch from and target current `develop`.
 Use focused commits with imperative subjects. Link the issue with `Fixes #<issue>`
 when the change resolves it, or `Refs #<issue>` for partial work.
 
@@ -46,8 +51,9 @@ to select the checks. Use `build.sh` to prepare Core and its matching dependenci
 | --- | --- |
 | Runtime bug | The failing case, the regression that now passes, and the target/package for device behavior |
 | Public API or PyNeat | Compile coverage for supported C++ usage and relevant `python/tests` coverage for Python behavior |
-| Test or fixture | The affected test passes on the intended target with the chosen fixture |
-| CI test selection | The named test executed and passed in that job's result, including any applicable DevKit lane |
+| Test or fixture update | The affected test passes on the intended target with the chosen fixture |
+| CI test selection | The named test ran and passed in the intended job, including any applicable DevKit lane |
+| Test removed from a job | The job no longer selects the test and the remaining tests pass |
 | Model archive handling | Contract tests and the [model archive validation gate](scripts/ci/run_model_archive_security_gate.sh) |
 | Install or performance | The applicable [install smoke](scripts/ci/run_install_smoke.sh) or [performance gate](scripts/ci/run_perf_regression_gate.sh) result |
 | Published documentation | The applicable localization checks, docs build, and strict link check |
@@ -66,7 +72,7 @@ log and compare it with `clang-format --version` in the SDK container. The Ubunt
 `sudo apt-get install clang-format` if needed. If a different installation
 takes precedence, put `/usr/bin` first on `PATH` for the format check.
 
-Run the checks on the branch diff:
+Use the PR's target branch for these checks. The commands below use `develop`.
 
 ```bash
 git fetch origin develop
@@ -78,7 +84,10 @@ bash scripts/check_duplicate_includes.sh --changed-only --base-ref origin/develo
 Optionally install the [local Git hooks](scripts/dev/install_hooks.sh) in your
 checkout to check staged files and run the pre-push crash/correctness gate.
 
-### Update translations
+### Verify docs and translations
+
+Read the changed docs and verify the instructions against supported behavior
+before marking the PR ready.
 
 For changes covered by the [localization guide](website/i18n/README.md), update
 the affected translations in every supported locale in the same PR. AI can
@@ -93,9 +102,9 @@ and [link check](scripts/ci/check_docs_links.sh).
 Fill in the [PR template](.github/PULL_REQUEST_TEMPLATE.md) with the issue,
 reason for the change, risk, validation, and any API, ABI, migration, or docs
 impact. After implementation, tests, and docs edits, review the full diff against
-`develop` using [core-review-pr](agents/skills/core-review-pr/SKILL.md). You can
-follow the skill manually. Address applicable findings, check the self-review box,
-and add one sentence describing what changed during review, or write `No findings`.
+the PR's target branch using [core-review-pr](agents/skills/core-review-pr/SKILL.md).
+You can follow the skill manually. Address applicable findings, check the
+self-review box, and add one sentence about what changed, or write `No findings`.
 Repeat after a substantial rewrite. Resolve reviewer findings and check the
 required CI results before merging.
 

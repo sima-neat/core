@@ -1,6 +1,6 @@
 # Core contributor instructions
 
-Start with [CONTRIBUTING.md](CONTRIBUTING.md), the [coding standard](docs/develop-apps/contribute/start-here/coding_standard.md), and the [test requirements](docs/develop-apps/contribute/build-test/test_requirements.md). Branch from and target `develop`. Use the [PR template](.github/PULL_REQUEST_TEMPLATE.md) and link the issue.
+Start with [CONTRIBUTING.md](CONTRIBUTING.md), the [coding standard](docs/develop-apps/contribute/start-here/coding_standard.md), and the [test requirements](docs/develop-apps/contribute/build-test/test_requirements.md). Branch from and target `develop` for regular contributions. Use the [PR template](.github/PULL_REQUEST_TEMPLATE.md) and link the issue.
 
 ## Choose a skill
 
@@ -28,7 +28,7 @@ such as publishing or updating runner images follow CONTRIBUTING.md.
 
 - Trace the change through supported C++ and Python callers and the owning component. Check the reachable inputs, default behavior, buffer lifetime, and failure paths.
 - Require a concrete case for each new option, helper, guard, or fallback. Reuse an existing contract or validation where possible. Prefer short comments that capture constraints and docs that help readers take an action.
-- For a bug fix, identify the original failure and the regression that passes. For a CI selection change, check the named test passed in the intended job. Report the tested target and package or the outstanding device check.
+- For a bug fix, identify the original failure and the regression that passes. For a CI selection change, check the evidence described in [core-update-tests](agents/skills/core-update-tests/SKILL.md). Report the tested target and package or the outstanding device check.
 - Check API and ABI separately. Compare `deps/manifest.json` with `main` before asking for an ABI bump. Check required translations and source hashes when localized docs change.
 
 Use [core-review-pr](agents/skills/core-review-pr/SKILL.md) for the full review. Give

@@ -1,6 +1,6 @@
 ## Summary
 
-<!-- Link the issue using Fixes #<issue> or Refs #<issue>. Describe what changed and why.
+<!-- Link the issue using Fixes #<issue> or Refs #<issue>. Describe what changed and why. Link any required code-owner design approval.
      Add a short flow sketch if it helps explain a change to routing, queues, or buffer ownership. Mark the changed step or link. -->
 
 ## Risk
@@ -18,12 +18,13 @@
 
 ## Docs impact
 
-<!-- Link any guide, example, or skill updates. Include required translations and source hashes in this PR. Use No docs update needed if existing guidance still applies. -->
+<!-- Link any guide, example, or skill updates. Read and verify changed docs before marking the PR ready.
+     Include required translations and source hashes in this PR. Use No docs update needed if existing guidance still applies. -->
 
 ## Author checks
 
 - [ ] Each new option, helper, or fallback serves a concrete case. I removed unrelated changes.
 - [ ] I trimmed comments that repeat the code and limited documentation edits to guidance readers need.
-- [ ] Before marking this PR ready for review, I reviewed the full diff against `develop` using `core-review-pr` and addressed the applicable findings.
+- [ ] Before marking this PR ready for review, I reviewed the full diff against the PR's target branch using `core-review-pr` and addressed the applicable findings.
 
 **Review outcome** <!-- Required. One sentence describing what you fixed during review, or No findings. -->
