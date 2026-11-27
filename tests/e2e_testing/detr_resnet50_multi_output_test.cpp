@@ -115,9 +115,41 @@ std::vector<double> tensor_values(const simaai::neat::Tensor& tensor, std::size_
   return out;
 }
 
-Outputs read_outputs(const simaai::neat::TensorList& outs) {
-  if (outs.size() != 2)
-    throw std::runtime_error("expected 2 outputs, got " + std::to_string(outs.size()));
+// The part of a route name after the last '/': the compiler's stage prefix, such as cast_5/,
+// follows its node numbering and may change.
+std::string leaf_name(const std::string& name) {
+  const std::size_t slash = name.rfind('/');
+  return slash == std::string::npos ? name : name.substr(slash + 1);
+}
+
+// Empty when every output has the name, shape and dtype the model declares; otherwise what differs.
+std::string contract_mismatch(const simaai::neat::TensorList& outs,
+                              const std::vector<simaai::neat::TensorSpec>& specs) {
+  static const char* const kNames[2] = {"logits", "box_logits"};
+  const std::vector<int64_t> shapes[2] = {{1, kQueries, kClasses}, {1, kQueries, 4}};
+  if (outs.size() != 2 || specs.size() != 2)
+    return std::to_string(outs.size()) + " outputs and " + std::to_string(specs.size()) +
+           " output specs, expected 2 and 2";
+  std::string detail;
+  for (std::size_t i = 0; i < 2; ++i) {
+    const simaai::neat::Tensor& t = outs[i];
+    const auto& dtypes = specs[i].dtypes;
+    const bool dtype_ok = std::find(dtypes.begin(), dtypes.end(), t.dtype) != dtypes.end();
+    if (leaf_name(t.route.name) != kNames[i] || t.shape != shapes[i] || !dtype_ok)
+      detail += "output " + std::to_string(i) + " is '" + t.route.name + "' " +
+                shape_string(t.shape) + " dtype " + std::to_string(static_cast<int>(t.dtype)) +
+                ", expected '" + kNames[i] + "' " + shape_string(shapes[i]) +
+                " with a dtype from output_specs(); ";
+  }
+  return detail;
+}
+
+// Every sync and async result goes through here, so each one is checked against the contract.
+Outputs read_outputs(const simaai::neat::TensorList& outs,
+                     const std::vector<simaai::neat::TensorSpec>& specs) {
+  const std::string mismatch = contract_mismatch(outs, specs);
+  if (!mismatch.empty())
+    throw std::runtime_error("output contract: " + mismatch);
   return {tensor_values(outs[0], static_cast<std::size_t>(kQueries) * kClasses),
           tensor_values(outs[1], static_cast<std::size_t>(kQueries) * 4)};
 }
@@ -289,12 +321,9 @@ int main(int argc, char** argv) {
                 << "' dtype=" << static_cast<int>(t.dtype) << " shape=" << shape_string(t.shape)
                 << "\n";
     }
-    if (people_outs.size() == 2)
-      check(people_outs[0].shape == std::vector<int64_t>{1, kQueries, kClasses} &&
-                people_outs[1].shape == std::vector<int64_t>{1, kQueries, 4},
-            "output order is logits then box_logits",
-            shape_string(people_outs[0].shape) + ", " + shape_string(people_outs[1].shape));
-    const Outputs people_ref = read_outputs(people_outs);
+    const std::string mismatch = contract_mismatch(people_outs, out_specs);
+    check(mismatch.empty(), "outputs are logits [1,100,92] then box_logits [1,100,4]", mismatch);
+    const Outputs people_ref = read_outputs(people_outs, out_specs);
     check(all_finite(people_ref.logits) && all_finite(people_ref.boxes), "outputs are finite");
 
     const auto people_dets = decode(people_ref, people.width, people.height);
@@ -306,7 +335,7 @@ int main(int argc, char** argv) {
     check(skier_found, "people.jpg has a person box on the jumping skier",
           "class 1, score >= 0.5, IoU >= 0.5");
 
-    const Outputs labrador_ref = read_outputs(runner.run({labrador.tensor}, kTimeoutMs));
+    const Outputs labrador_ref = read_outputs(runner.run({labrador.tensor}, kTimeoutMs), out_specs);
     const auto labrador_dets = decode(labrador_ref, labrador.width, labrador.height);
     print_top("labrador", labrador_dets, 3);
     check(!labrador_dets.empty() && labrador_dets.front().class_id == kCocoDog &&
@@ -339,7 +368,7 @@ int main(int argc, char** argv) {
       std::string detail;
       for (std::size_t i = 0; i < order.size(); ++i) {
         simaai::neat::Sample sample = runner.pull(kTimeoutMs);
-        const Outputs got = read_outputs(simaai::neat::tensors_from_sample(sample));
+        const Outputs got = read_outputs(simaai::neat::tensors_from_sample(sample), out_specs);
         const Outputs& want = order[i] == &people ? people_ref : labrador_ref;
         const double diff =
             std::max(max_abs_diff(got.logits, want.logits), max_abs_diff(got.boxes, want.boxes));
@@ -359,16 +388,21 @@ int main(int argc, char** argv) {
     // wrong shape tolerates that error. An extra input is not refused yet (core#1570).
     auto check_rejected = [&](const std::string& name, const simaai::neat::TensorList& bad,
                               bool stops_runner_1566 = false,
-                              const char* known_if_accepted = nullptr) {
+                              const char* known_if_accepted = nullptr,
+                              const char* expected_reason = nullptr) {
       auto fresh = model.build(simaai::neat::TensorList{people.tensor});
       std::string what;
       const bool rejected = throws([&] { (void)fresh.run(bad, kTimeoutMs); }, &what);
       if (!rejected && known_if_accepted != nullptr)
         std::cout << "[KNOWN] " << known_if_accepted << ": " << name << " was accepted\n";
       else
-        check(rejected, name + " is rejected", what);
+        check(rejected &&
+                  (expected_reason == nullptr || what.find(expected_reason) != std::string::npos),
+              name + " is rejected" +
+                  (expected_reason ? std::string(" for '") + expected_reason + "'" : ""),
+              what);
       try {
-        const Outputs again = read_outputs(fresh.run({people.tensor}, kTimeoutMs));
+        const Outputs again = read_outputs(fresh.run({people.tensor}, kTimeoutMs), out_specs);
         check(std::max(max_abs_diff(again.logits, people_ref.logits),
                        max_abs_diff(again.boxes, people_ref.boxes)) <= kAsyncTolerance,
               "valid run after " + name + " matches the first run");
@@ -390,7 +424,8 @@ int main(int argc, char** argv) {
     std::vector<uint8_t> bytes(static_cast<std::size_t>(kInputSize) * kInputSize * 3, 0);
     check_rejected("wrong input dtype",
                    {simaai::neat::Tensor::from_vector(bytes, {1, kInputSize, kInputSize, 3},
-                                                      simaai::neat::TensorMemory::EV74)});
+                                                      simaai::neat::TensorMemory::EV74)},
+                   false, nullptr, "tensor format does not match dtype");
     check_rejected("extra input", {people.tensor, labrador.tensor}, false, "core#1570");
 
     if (failures > 0) {
