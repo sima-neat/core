@@ -63,8 +63,8 @@ void check_multipart_pts(bool do_timestamp, const std::vector<GstClockTime>& exp
           "could not start multipart timestamp test pipeline");
 
   const std::string part = "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: 1\r\n\r\nx\r\n";
-  for (const GstClockTime read_pts : {80 * GST_MSECOND, 100 * GST_MSECOND, 250 * GST_MSECOND}) {
-    const std::string bytes = part + part + (read_pts == 250 * GST_MSECOND ? "--frame--\r\n" : "");
+  for (const GstClockTime read_pts : {80 * GST_MSECOND, 100 * GST_MSECOND, 180 * GST_MSECOND}) {
+    const std::string bytes = part + part + (read_pts == 180 * GST_MSECOND ? "--frame--\r\n" : "");
     GstBuffer* chunk = gst_buffer_new_allocate(nullptr, bytes.size(), nullptr);
     gst_buffer_fill(chunk, 0, bytes.data(), bytes.size());
     GST_BUFFER_PTS(chunk) = read_pts;
@@ -184,11 +184,11 @@ void require_backend_shape(const Graph& graph, const std::string& label) {
 int main() {
   try {
     gst_init(nullptr, nullptr);
-    // The second HTTP read arrives before the inferred PTS of the preceding JPEG.
-    check_multipart_pts(true, {80 * GST_MSECOND, 120 * GST_MSECOND, 160 * GST_MSECOND,
-                               200 * GST_MSECOND, 250 * GST_MSECOND, 290 * GST_MSECOND});
+    // The early second read must leave room to accept the third read's PTS.
+    check_multipart_pts(true, {80 * GST_MSECOND, 120 * GST_MSECOND, 121 * GST_MSECOND,
+                               161 * GST_MSECOND, 180 * GST_MSECOND, 220 * GST_MSECOND});
     check_multipart_pts(false, {80 * GST_MSECOND, GST_CLOCK_TIME_NONE, 100 * GST_MSECOND,
-                                GST_CLOCK_TIME_NONE, 250 * GST_MSECOND, GST_CLOCK_TIME_NONE});
+                                GST_CLOCK_TIME_NONE, 180 * GST_MSECOND, GST_CLOCK_TIME_NONE});
 
     simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions opt;
     opt.url = "http://example.local/mjpeg";

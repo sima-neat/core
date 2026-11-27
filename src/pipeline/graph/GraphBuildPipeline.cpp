@@ -2639,15 +2639,18 @@ static void encoded_caps_fixup_log_once(EncodedCapsFixupCtx* ctx) {
 static GstPadProbeReturn repair_http_mjpeg_pts(GstPadProbeInfo* info, EncodedCapsFixupCtx& ctx) {
   GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
   const GstClockTime pts = GST_BUFFER_PTS(buffer);
+  const bool have_pts = GST_CLOCK_TIME_IS_VALID(pts);
   const bool have_last_pts = GST_CLOCK_TIME_IS_VALID(ctx.last_pts);
-  if (GST_CLOCK_TIME_IS_VALID(pts) && (!have_last_pts || pts > ctx.last_pts)) {
+  if (have_pts && (!have_last_pts || pts > ctx.last_pts)) {
     ctx.last_pts = pts;
     return GST_PAD_PROBE_OK;
   }
 
-  // A single HTTP read can supply several JPEGs. Its next timestamp can also
-  // fall behind a timestamp inferred for a preceding JPEG.
-  const GstClockTime repaired_pts = have_last_pts ? ctx.last_pts + ctx.frame_interval : 0;
+  // Use the frame interval for unstamped JPEGs. A smaller step for a known PTS
+  // that falls behind lets the next HTTP read restore the source timing.
+  const GstClockTime step =
+      have_pts ? std::min<GstClockTime>(ctx.frame_interval, GST_MSECOND) : ctx.frame_interval;
+  const GstClockTime repaired_pts = have_last_pts ? ctx.last_pts + step : 0;
   buffer = gst_buffer_make_writable(buffer);
   GST_PAD_PROBE_INFO_DATA(info) = buffer;
   if (!buffer)
