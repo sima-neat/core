@@ -8,6 +8,8 @@
 #include "internal/GraphBuildInternal.h"
 
 #include "nodes/common/EncodedCapsFixup.h"
+#include "nodes/common/MultipartJpegDemux.h"
+#include "nodes/io/HttpSource.h"
 #include "nodes/io/RTSPInput.h"
 #include "nodes/rtp/H264CapsFixup.h"
 #include "nodes/rtp/H264Depacketize.h"
@@ -1279,6 +1281,8 @@ struct EncodedCapsFixupCtx {
   std::string rtp_encoding_name;
   bool use_rtsp_sdp_fps = false;
   std::atomic<int> sdp_fps{0};
+  GstClockTime frame_interval = 0;
+  GstClockTime last_pts = GST_CLOCK_TIME_NONE;
   bool logged = false;
   bool missing_logged = false;
 };
@@ -2632,12 +2636,53 @@ static void encoded_caps_fixup_log_once(EncodedCapsFixupCtx* ctx) {
   ctx->logged = true;
 }
 
+static GstPadProbeReturn repair_http_mjpeg_pts(GstPadProbeInfo* info, EncodedCapsFixupCtx& ctx) {
+  GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+  const GstClockTime pts = GST_BUFFER_PTS(buffer);
+  const bool have_pts = GST_CLOCK_TIME_IS_VALID(pts);
+  const bool have_last_pts = GST_CLOCK_TIME_IS_VALID(ctx.last_pts);
+  if (have_pts && (!have_last_pts || pts > ctx.last_pts)) {
+    ctx.last_pts = pts;
+    return GST_PAD_PROBE_OK;
+  }
+
+  // Use the frame interval for unstamped JPEGs. A smaller step for a known PTS
+  // that falls behind lets the next HTTP read restore the source timing.
+  const GstClockTime step =
+      have_pts ? std::min<GstClockTime>(ctx.frame_interval, GST_MSECOND) : ctx.frame_interval;
+  const GstClockTime repaired_pts = have_last_pts ? ctx.last_pts + step : 0;
+  buffer = gst_buffer_make_writable(buffer);
+  GST_PAD_PROBE_INFO_DATA(info) = buffer;
+  if (!buffer)
+    return GST_PAD_PROBE_DROP;
+  GST_BUFFER_PTS(buffer) = repaired_pts;
+  ctx.last_pts = repaired_pts;
+  return GST_PAD_PROBE_OK;
+}
+
+static bool http_mjpeg_timestamping_enabled(const std::vector<std::shared_ptr<Node>>& nodes,
+                                            size_t fixup_index) {
+  bool saw_multipart_demux = false;
+  for (size_t i = fixup_index; i-- > 0;) {
+    if (const auto* source = dynamic_cast<const HttpSource*>(nodes[i].get()))
+      return saw_multipart_demux && source->options().do_timestamp;
+    if (nodes[i]->input_role() != InputRole::None)
+      break;
+    if (dynamic_cast<const MultipartJpegDemux*>(nodes[i].get()))
+      saw_multipart_demux = true;
+  }
+  return false;
+}
+
 static GstPadProbeReturn encoded_caps_fixup_cb(GstPad* pad, GstPadProbeInfo* info,
                                                gpointer user_data) {
   (void)pad;
   auto* ctx = reinterpret_cast<EncodedCapsFixupCtx*>(user_data);
   if (!ctx)
     return GST_PAD_PROBE_OK;
+
+  if ((GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) != 0)
+    return repair_http_mjpeg_pts(info, *ctx);
 
   if ((GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM) != 0) {
     GstQuery* query = GST_PAD_PROBE_INFO_QUERY(info);
@@ -2678,6 +2723,8 @@ static GstPadProbeReturn encoded_caps_fixup_cb(GstPad* pad, GstPadProbeInfo* inf
     return GST_PAD_PROBE_OK;
 
   GstEvent* ev = GST_PAD_PROBE_INFO_EVENT(info);
+  if (ev && GST_EVENT_TYPE(ev) == GST_EVENT_SEGMENT)
+    ctx->last_pts = GST_CLOCK_TIME_NONE;
   if (!ev || GST_EVENT_TYPE(ev) != GST_EVENT_CAPS)
     return GST_PAD_PROBE_OK;
 
@@ -2737,6 +2784,13 @@ static void attach_encoded_caps_fixups(GstElement* pipeline,
     ctx->media_type = fix->options().media_type;
     ctx->fallback_fps = fix->options().fallback_fps;
     ctx->use_rtsp_sdp_fps = fix->options().use_rtsp_sdp_fps;
+    unsigned probe_types =
+        GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM | GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM;
+    if (ctx->media_type == "image/jpeg" && ctx->fallback_fps > 0 && !ctx->use_rtsp_sdp_fps &&
+        http_mjpeg_timestamping_enabled(nodes, i)) {
+      ctx->frame_interval = std::max<GstClockTime>(GST_SECOND / ctx->fallback_fps, 1);
+      probe_types |= GST_PAD_PROBE_TYPE_BUFFER;
+    }
     if (ctx->use_rtsp_sdp_fps) {
       ctx->rtsp_element_name =
           find_rtsp_input_name_for_fixup(nodes, i, name_transform, node_indices);
@@ -2753,10 +2807,7 @@ static void attach_encoded_caps_fixups(GstElement* pipeline,
       }
     }
     gst_pad_add_probe(
-        src,
-        static_cast<GstPadProbeType>(GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM |
-                                     GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM),
-        encoded_caps_fixup_cb, ctx,
+        src, static_cast<GstPadProbeType>(probe_types), encoded_caps_fixup_cb, ctx,
         +[](gpointer p) { delete reinterpret_cast<EncodedCapsFixupCtx*>(p); });
 
     gst_object_unref(src);
