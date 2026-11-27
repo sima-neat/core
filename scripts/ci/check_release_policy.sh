@@ -48,13 +48,7 @@ for script in scripts/ci/*.sh; do
 done
 
 required_checks=(
-  "configure-build-sanity"
-  "docs-link-check"
-  "crash-correctness-gate"
-  "soak-weekly"
-  "fuzz-nightly"
-  "stress-gate"
-  "asan-ubsan-gate"
+  ".github/workflows/vulcan-ci.yml"
 )
 
 for check_name in "${required_checks[@]}"; do
@@ -76,32 +70,6 @@ for policy_line in "${required_crash_policy_lines[@]}"; do
     fail=1
   fi
 done
-
-project_version="$(sed -n 's/^project(SimaNeat VERSION \([^ )]*\).*/\1/p' CMakeLists.txt | head -n 1)"
-if [[ -z "${project_version}" ]]; then
-  echo "ERROR: Unable to determine project version from CMakeLists.txt" >&2
-  fail=1
-fi
-
-ref_name="${GITHUB_REF_NAME:-}"
-if [[ -z "${ref_name}" ]]; then
-  ref_name="$(git rev-parse --abbrev-ref HEAD)"
-fi
-
-release_version=""
-if [[ "${ref_name}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-  release_version="${BASH_REMATCH[1]}"
-elif [[ "${ref_name}" =~ ^release/([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-  release_version="${BASH_REMATCH[1]}"
-fi
-
-if [[ -n "${release_version}" ]]; then
-  echo "[release-policy] release ref detected (${ref_name}), validating release metadata..."
-  if [[ "${project_version}" != "${release_version}" ]]; then
-    echo "ERROR: CMake project version (${project_version}) must match release version (${release_version})." >&2
-    fail=1
-  fi
-fi
 
 if [[ "${fail}" -ne 0 ]]; then
   exit 1

@@ -23,18 +23,16 @@ slug: /develop-apps/contribute/release-checklist
 4. 文檔連結檢查在嚴格模式下通過（`DOCS_STRICT_LINKS=1`）。
 5. 在生成步驟之後，工作樹是乾淨的。
 6. 在提交和發布參考版本中，沒有未解決的崩潰/正確性錯誤。
-7. 崩潰/正確性/壓力/消毒器閘道在發布參考版本中顯示為綠色。
-8. 穩定性測試通道對於發布標籤顯示為綠色（`soak-weekly`）。
-9. 模糊測試通道對於發布候選版本顯示為綠色（`fuzz-nightly`）。
-10. 零跳過閘道對於嚴格測試通道顯示為綠色（`zero-skip-gate`）。
-11. 必需的治理檔案存在且有效：
+7. Vulcan CI（`.github/workflows/vulcan-ci.yml`）已在要加上標籤的那個提交上通過。
+8. 零跳過閘道（`scripts/ci/run_zero_skip_gate.sh`）在 Vulcan CI 測試通道中通過。
+9. 必需的治理檔案存在且有效：
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
    - `docs/develop-apps/contribute/release-checklist.md`
-12. 發布元資料已完成：
-   - `project(SimaNeat VERSION x.y.z)` 在 `CMakeLists.txt` 中更新
-   - `package-version` 和 `platform-version` 在 `deps/manifest.json` 中更新（如果需要）
+10. 發布元資料已完成：
+   - 要加上標籤的提交中，`deps/manifest.json` 的 `package-version` 等於發布版本，例如 `v0.7.0` 對應 `0.7.0`
+   - `platform-version` 在 `deps/manifest.json` 中更新（如果需要）
    - `modelzoo-version` 顯式選擇經過驗證的 Model Zoo 發布版本，當其與 `platform-version` 不同時；如果省略，Model Zoo 解析將預設為 `platform-version`
    - 只有在公開 C++ 型別佈局或匯出的二進位契約發生不相容變更，且 `develop` 仍使用與 `main` 相同的 ABI 版本時，
      才遞增 `deps/manifest.json` 中的 `abi-version`。如果 `develop` 已有供下次發布使用的較高 ABI 版本，
@@ -44,28 +42,17 @@ slug: /develop-apps/contribute/release-checklist
 
 在發布流程中不允許存在「已知崩潰」列表。任何崩潰回歸都會阻止發布，直到修復為止。
 
-## 必需的狀態檢查
+## 排程測試通道
 
-以下檢查對於發布 PR 和發布標籤是必需的：
+這些通道不會阻止發布。崩潰/正確性、壓力、消毒器和模糊測試每晚執行。
+穩定性測試和長時間測試每週執行。
 
-- `configure-build-sanity`
-- `docs-link-check`
-- `crash-correctness-gate`
-- `zero-skip-gate`
-- `soak-weekly`（對於發布標籤是必需的）
-- `fuzz-nightly`（對於發布候選版本是必需的）
-- `stress-gate`
-- `asan-ubsan-gate`
-
-這些檢查在以下位置實施：
-
-- `.github/workflows/vulcan-ci.yml`
 - `.github/workflows/test-crash-correctness-nightly.yml`
-- `.github/workflows/test-soak-weekly.yml`
-- `.github/workflows/long-tests-weekly.yml`
-- `.github/workflows/vulcan-fuzz-nightly.yml`
 - `.github/workflows/test-stress-nightly.yml`
 - `.github/workflows/sanitizers.yml`
+- `.github/workflows/vulcan-fuzz-nightly.yml`
+- `.github/workflows/test-soak-weekly.yml`
+- `.github/workflows/long-tests-weekly.yml`
 
 ## GitHub 分支和標籤保護
 
@@ -82,12 +69,55 @@ slug: /develop-apps/contribute/release-checklist
 
 ## 發布流程
 
-1. 開啟 **Actions → Release → Run workflow** 以建立發布候選版本。例如要發布 0.7.0，請將 `release_line` 設為 `0.7`、`tag` 設為 `0.7.0-rc1`，保留 `main` 作為 `source_branch`，並開啟 `prerelease`、關閉 `latest`。此工作流程會建立或重複使用 `release-0.7`，加上 `v0.7.0-rc1` 標籤，並建立預先發布版草稿。若 `release-0.7` 已存在（例如發布 0.7.1 時），由於 `branch_exists_behavior` 預設為 `reuse`，工作流程會將標籤加在其最新提交上。請在建立第一個候選版本之前，透過拉取請求將 `main` 合併到 `release-0.7`。
-2. 凍結非發布版 PR 的合併。
-3. 驗證候選版本。若需要修正，請先將修正合併到 `release-0.7`，再以下一個候選標籤重新執行工作流程，例如 `0.7.0-rc2`。
-4. 候選版本通過驗證後，確認 `release-0.7` 仍指向該候選版本。工作流程會將標籤加在 `release-0.7` 的最新提交上，無法標記較舊的提交。執行 `git fetch --tags origin` 後，`git rev-parse origin/release-0.7` 必須輸出與 `git rev-parse v0.7.0-rcN^{commit}` 相同的提交。其中 `rcN` 是通過驗證的候選版本。若候選版本之後有變更進入分支，請先建立新的候選版本。接著將 `tag` 設為 `0.7.0`，關閉 `prerelease` 並開啟 `latest`，然後執行工作流程。它會將 `v0.7.0` 標籤加在該提交上，並建立正式發布版草稿。此次執行也要求所有 Target Release 為 `core-0.7.0` 的 issue 皆為 Done，之後將它們的 Release Status 設為 `released`。候選版本的執行會略過此檢查。
-5. 將發布版分支快速合併回 `main`。
-6. 發布版本資訊並發布發布後續問題。
+直接以正式標籤發布，例如 `v0.7.0`。不要建立發布候選版本標籤。主要發布與修補發布使用同一個工作流程
+**Actions → Release**。它會為新版本線從 `main` 建立 `release-X.Y`，或重複使用既有的 `release-X.Y`，
+將標籤加在該分支的最新提交上，並建立 GitHub 發布版草稿。它的第一個作業會檢查該提交的 `package-version` 是否等於 `tag`。
+它要求所有 Target Release 為 `core-X.Y.Z` 的 issue 皆為 Done，之後將它們的 Release Status 設為 `released`。
+
+### 主要發布
+
+此範例在新版本線上發布 `v0.7.0`。
+
+1. 在 `develop` 上，將 `deps/manifest.json` 中的 `package-version` 設為 `0.7.0`。當阻止發布的條件要求時，更新 `platform-version`、`modelzoo-version` 和 `abi-version`，並依照「最新文件版本」的說明更新發布資料。
+2. 透過拉取請求將 `develop` 合併到 `main`。
+3. 執行 `git fetch origin`。要加上標籤的提交為 `git rev-parse origin/main`。在標籤建立之前，不要將任何內容合併到 `main`。
+4. 在該提交上執行「加上標籤之前」中的檢查。
+5. 開啟 **Actions → Release → Run workflow**。將 `release_line` 設為 `0.7`、`tag` 設為 `0.7.0`，保留 `main` 作為 `source_branch`，`prerelease` 保持關閉、`latest` 保持開啟。工作流程會從 `main` 建立 `release-0.7`，加上 `v0.7.0` 標籤並建立發布版草稿。
+6. 接著進行「加上標籤之後」和「公開發布版」中的步驟。
+
+### 修補發布
+
+此範例在既有的 `release-0.6` 上發布 `v0.6.3`。
+
+1. 準備 `release-0.6`：
+   - 若透過 `main` 合併 `develop` 時會進入 `release-0.6` 的所有變更都預定用於 `0.6.3`，請使用該合併路徑：依照主要發布的步驟 1，在 `develop` 上將 `package-version` 設為 `0.6.3`，將 `develop` 合併到 `main`，然後透過拉取請求將 `main` 合併到 `release-0.6`。
+   - 否則，請從 `release-0.6` 建立分支，以 `git cherry-pick -x` 只挑選預定的修正，將 `package-version` 設為 `0.6.3`，並開啟合併回 `release-0.6` 的拉取請求。
+2. 執行 `git fetch origin`。要加上標籤的提交為 `git rev-parse origin/release-0.6`。在標籤建立之前，不要將任何內容合併到 `release-0.6`。
+3. 在該提交上執行「加上標籤之前」中的檢查。
+4. 開啟 **Actions → Release → Run workflow**。將 `release_line` 設為 `0.6`、`tag` 設為 `0.6.3`，保留 `main` 作為 `source_branch`，`prerelease` 保持關閉。若較新的版本線已發布，請關閉 `latest`。由於 `branch_exists_behavior` 預設為 `reuse`，工作流程會重複使用 `release-0.6`，在其最新提交上加上 `v0.6.3` 標籤並建立發布版草稿。
+5. 接著進行「加上標籤之後」和「公開發布版」中的步驟。
+
+### 共同步驟
+
+`<commit>` 是主要發布步驟 3 或修補發布步驟 2 中要加上標籤的提交。
+命令中使用 `0.7.0`；修補發布請改用其版本，例如 `0.6.3`。
+
+#### 加上標籤之前
+
+1. 檢查版本。`git show <commit>:deps/manifest.json` 必須顯示 `"package-version": "0.7.0"`。若不是，Release 工作流程會在第一個作業中、建立分支或標籤之前停止。
+2. 確認標準 Vulcan CI 已在該提交上通過。`gh run list --repo sima-neat/core --workflow vulcan-ci.yml --commit <commit>` 會列出其執行，在 `main` 或發布分支上既有的成功執行可以重複使用。若沒有，請以 `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref main` 啟動，修補發布則使用 `--ref release-0.6`。確認新執行的 `headSha` 就是該提交，然後以 `gh run watch <run-id> --repo sima-neat/core --exit-status` 等待結果。
+3. 檢查 issue 閘道。在 Neat Releases 專案（`https://github.com/orgs/sima-neat/projects/6`）中，必須至少有一個 issue 的 Target Release 為 `core-0.7.0`，且所有具有該 Target Release 的 issue 皆為 Done。開啟 `dry_run` 的 Release 執行會進行此檢查與版本檢查，但不會推送任何內容，也不會變更 issue。
+
+#### 加上標籤之後
+
+1. 確認 Release 執行摘要中的 **Target SHA** 就是該提交。若不是，請不要發布草稿。
+2. 以 `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref v0.7.0` 對該標籤啟動標準 Vulcan CI。由工作流程加上的標籤本身不會啟動任何工作流程。此執行會發布 `sima-cli neat install core@v0.7.0` 所安裝的帶版本套件以及離線套件組。
+3. 以 `gh run watch <run-id> --repo sima-neat/core --exit-status` 等待整個執行成功，包括 `Publish develop and release offline bundles` 作業。`latest.tag` 會在該作業開始之前更新，因此無法用來判斷執行已完成。
+
+#### 公開發布版
+
+1. 開啟 GitHub 發布版草稿，檢查版本資訊後按一下 **Publish release**。
+2. 開立發布後續問題。
 
 ## 運營注意事項
 
