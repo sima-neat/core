@@ -52,17 +52,20 @@ Sample pool_sample(const ref::BEVPoolCase& fixture, const std::vector<std::uint8
 }
 
 // What a connected graph delivers to SimaBEVPool's segment: graphs::Combine joins
-// a camera fragment's depth and context with a SimaBEVPoolPlan fragment's plan
-// into one Bundle, and the pool's contract compiles from that joined sample.
+// the camera fragment's depth and context with a SimaBEVPoolPlan fragment's plan
+// into one Bundle, and the pool's contract compiles from that joined sample. Each
+// field is one CPU tensor here: a CPU-owned multi-tensor field has no GstSample
+// backing to describe as a tensor-set view, which real pipeline outputs do have.
 Sample joined_sample(const ref::BEVPoolCase& fixture, const std::vector<std::uint8_t>& plan) {
   const auto flat = tensors_from_sample(pool_sample(fixture, plan), true);
-  Sample camera = sample_from_tensors({flat[0], flat[1]});
-  Sample plan_field;
-  plan_field.kind = SampleKind::Tensor;
-  plan_field.tensor = flat[2];
   Sample bundle;
   bundle.kind = SampleKind::Bundle;
-  bundle.fields = {camera, plan_field};
+  for (const auto& tensor : flat) {
+    Sample field;
+    field.kind = SampleKind::Tensor;
+    field.tensor = tensor;
+    bundle.fields.push_back(field);
+  }
   return bundle;
 }
 
