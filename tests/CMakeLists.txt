@@ -998,6 +998,7 @@ set(E2E_TESTS
   hybrid_graph_fanout_test
   hybrid_graph_multistream_scheduler_test
   hybrid_graph_stage_model_test
+  open_input_caps_error_regression_test
   output_appsink_policy_test
   gst_data_adapter_runtime_regression_test
   preproc_standalone_test
