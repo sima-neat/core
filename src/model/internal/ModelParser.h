@@ -71,6 +71,8 @@ struct ParsedModelNeeds {
   bool post_detessellation = false;
   bool post_dequantization = false;
   bool post_cast = false;
+  // A cast moved into inference that would otherwise have balanced the ingress cast.
+  bool inference_tail_cast = false;
 };
 
 struct ParsedRouteCapabilities {

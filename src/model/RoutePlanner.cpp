@@ -2487,6 +2487,8 @@ std::vector<RouteRegion> derive_post_regions_from_graph(const ModelPack& pack) {
   if (view.mla_node_index == std::numeric_limits<std::size_t>::max()) {
     return {};
   }
+  const auto compute_feeding_tail = compute_feeding_tail_plugins(
+      contract, static_cast<std::size_t>(pack.route_graph().last_mla_plugin_index));
   std::vector<std::size_t> candidate_nodes;
   candidate_nodes.reserve(graph.nodes.size());
   for (std::size_t node_index = 0; node_index < graph.nodes.size(); ++node_index) {
@@ -2495,6 +2497,13 @@ std::vector<RouteRegion> derive_post_regions_from_graph(const ModelPack& pack) {
     }
     const auto kind = route_graph_kind_from_mpk_node_local(graph.nodes[node_index]);
     if (!is_graph_post_stage_kind(kind)) {
+      continue;
+    }
+    // Materialized work that feeds a compute plugin is inference, not post-processing.
+    // Address-only views stay in the raw graph evidence.
+    const auto plugin_index = graph.nodes[node_index].plugin_index;
+    if (is_materialized_post_graph_kind(kind) && plugin_index < compute_feeding_tail.size() &&
+        compute_feeding_tail[plugin_index]) {
       continue;
     }
     candidate_nodes.push_back(node_index);
@@ -2610,6 +2619,7 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
     return false;
   }
   const std::size_t last_mla_rank = last_mla_rank_it->second;
+  const auto compute_feeding_tail = compute_feeding_tail_plugins(contract, *last_mla_idx);
   const auto pre_kind_dbg = [](PreRouteStageKind kind) -> const char* {
     switch (kind) {
     case PreRouteStageKind::None:
@@ -2717,6 +2727,20 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
         out->egress_contracts.insert(out->egress_contracts.end(), outputs.begin(), outputs.end());
       }
       continue;
+    }
+    // Materialized work that feeds a compute plugin is inference, not post-processing.
+    // Address-only views keep their route handling.
+    if (after_mla && compute_feeding_tail[plugin_idx]) {
+      const auto* node = pipeline_internal::sima::route_graph_node(graph, plugin_idx);
+      if (node != nullptr && is_materialized_post_graph_kind(node->kind)) {
+        // A cast moved into inference, alone or fused with detessellation, still balances an
+        // ingress cast for cast symmetry.
+        using GraphKind = pipeline_internal::sima::RouteGraphKernelKind;
+        if (node->kind == GraphKind::Cast || node->kind == GraphKind::DetessCast) {
+          out->inference_tail_cast = true;
+        }
+        continue;
+      }
     }
     std::string kernel_source = plugin.kernel;
     if (kernel_source.empty()) {
@@ -3400,6 +3424,65 @@ std::string generic_terminal_pre_stage_name(const RouteCapability& capability) {
 
 } // namespace
 
+std::vector<bool> compute_feeding_tail_plugins(const pipeline_internal::sima::MpkContract& contract,
+                                               std::size_t last_mla_plugin_index) {
+  const std::size_t plugin_count = contract.plugins.size();
+  std::vector<bool> result(plugin_count, false);
+  if (last_mla_plugin_index >= plugin_count) {
+    return result;
+  }
+  std::vector<std::vector<std::size_t>> outgoing(plugin_count);
+  std::vector<std::vector<std::size_t>> incoming(plugin_count);
+  for (const auto& edge : contract.edges) {
+    if (edge.src_plugin_index >= plugin_count || edge.dst_plugin_index >= plugin_count) {
+      continue;
+    }
+    outgoing[edge.src_plugin_index].push_back(edge.dst_plugin_index);
+    incoming[edge.dst_plugin_index].push_back(edge.src_plugin_index);
+  }
+  const auto is_compute = [&](std::size_t index) {
+    const auto processor = pipeline_internal::lower_copy(contract.plugins[index].processor);
+    return processor == "mla" || processor == "a65";
+  };
+
+  std::vector<bool> downstream(plugin_count, false);
+  std::vector<std::size_t> stack;
+  for (const auto next : outgoing[last_mla_plugin_index]) {
+    stack.push_back(next);
+  }
+  while (!stack.empty()) {
+    const auto current = stack.back();
+    stack.pop_back();
+    if (downstream[current]) {
+      continue;
+    }
+    downstream[current] = true;
+    stack.insert(stack.end(), outgoing[current].begin(), outgoing[current].end());
+  }
+
+  std::vector<bool> feeds(plugin_count, false);
+  for (std::size_t index = 0; index < plugin_count; ++index) {
+    if (is_compute(index)) {
+      stack.push_back(index);
+    }
+  }
+  while (!stack.empty()) {
+    const auto current = stack.back();
+    stack.pop_back();
+    for (const auto previous : incoming[current]) {
+      if (!feeds[previous]) {
+        feeds[previous] = true;
+        stack.push_back(previous);
+      }
+    }
+  }
+
+  for (std::size_t index = 0; index < plugin_count; ++index) {
+    result[index] = downstream[index] && feeds[index] && !is_compute(index);
+  }
+  return result;
+}
+
 ModelSemantics build_model_semantics(const ModelPack& pack) {
   ModelSemantics out;
   (void)parse_model_semantics_from_pack(pack, &out);
@@ -4024,7 +4107,7 @@ RouteCapability extract_route_capability(const ModelPack& pack,
   out.needs.post_detessellation = out.tess_needed;
   out.needs.post_dequantization = out.has_external_dequant;
   out.needs.post_cast = out.has_external_post_cast;
-  if (out.needs.pre_cast && !out.needs.post_cast) {
+  if (out.needs.pre_cast && !out.needs.post_cast && !out.inference_tail_cast) {
     out.evidence.push_back("cast_symmetry_unresolved=pre_cast_without_post_cast");
   }
 
@@ -4202,7 +4285,8 @@ RouteSelection plan_route_selection(const Model::Options& options,
     }
   }
 
-  effective.cast_symmetry_ok = !capability.needs.pre_cast || capability.needs.post_cast;
+  effective.cast_symmetry_ok =
+      !capability.needs.pre_cast || capability.needs.post_cast || capability.inference_tail_cast;
   if (!effective.cast_symmetry_ok) {
     out.ambiguous = true;
     out.ambiguity_reason = "route ambiguity: cast symmetry violated (pre cast requires post cast)";

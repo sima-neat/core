@@ -2146,8 +2146,8 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
       if (!mla_stage) {
         throw std::runtime_error(
             "ModelFragment: strict MPK MLA contract missing for stage '" + stage.stage_name +
-            "'. Ensure the MPK manifest includes an MLA plugin with"
-            " input/output tensor contracts (processor='MLA' or kernel='infer').");
+            "'. Ensure the MPK manifest includes an MLA plugin (processor='MLA') with"
+            " input/output tensor contracts.");
       }
       if (to_upper(mla_stage->processor) != "MLA") {
         throw std::runtime_error("ModelFragment: execution-stage identity '" + stage.stage_name +

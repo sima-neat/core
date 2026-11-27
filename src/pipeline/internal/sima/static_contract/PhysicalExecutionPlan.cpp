@@ -559,6 +559,86 @@ void expand_egress_relation_frontier(const ModelExecutionPlan& plan, const Consu
   }
 }
 
+// Dataflow facts that decide where inference ends after the last MLA.
+// `downstream_of_last_mla[op]`: the op is reachable from the last MLA through any ops (views and
+// A65 included). `feeds_compute[op]`: an output of the op reaches an input of an MLA or A65 op.
+// Provenance follows a value's producer, else the source of its read expression, plus the
+// compiler-authored op dependencies.
+struct LastMlaDataflow {
+  std::vector<bool> downstream_of_last_mla;
+  std::vector<bool> feeds_compute;
+  bool a65_downstream_of_last_mla = false;
+};
+
+LastMlaDataflow last_mla_dataflow(const ModelExecutionPlan& plan, const ProducerTable& producers) {
+  const auto& ops = plan.ops();
+  LastMlaDataflow result;
+  result.downstream_of_last_mla.assign(ops.size(), false);
+  result.feeds_compute.assign(ops.size(), false);
+
+  const auto provenance = [&](ValueId value_id) -> std::optional<OpId> {
+    for (std::size_t step = 0; step <= plan.values().size(); ++step) {
+      if (value_id >= producers.size()) {
+        return std::nullopt;
+      }
+      if (producers[value_id]) {
+        return producers[value_id];
+      }
+      const auto* value = plan.value(value_id);
+      if (!value || !value->read_expression) {
+        return std::nullopt;
+      }
+      value_id = value->read_expression->source_value_id;
+    }
+    return std::nullopt;
+  };
+
+  std::optional<std::size_t> last_mla;
+  for (std::size_t index = 0; index < ops.size(); ++index) {
+    if (ops[index].kind == OpKind::Mla) {
+      last_mla = index;
+    }
+  }
+  if (!last_mla) {
+    return result;
+  }
+
+  const auto reaches_last_mla = [&](const OpId op_id) {
+    return op_id == *last_mla || (op_id < ops.size() && result.downstream_of_last_mla[op_id]);
+  };
+  for (std::size_t index = *last_mla + 1U; index < ops.size(); ++index) {
+    const auto& op = ops[index];
+    bool downstream = std::any_of(op.inputs.begin(), op.inputs.end(), [&](const ValueId input) {
+      const auto producer = provenance(input);
+      return producer && reaches_last_mla(*producer);
+    });
+    downstream =
+        downstream || std::any_of(op.dependencies.begin(), op.dependencies.end(), reaches_last_mla);
+    result.downstream_of_last_mla[index] = downstream;
+    if (downstream && op.kind == OpKind::HostTvm) {
+      result.a65_downstream_of_last_mla = true;
+    }
+  }
+
+  for (std::size_t index = ops.size(); index-- > 0;) {
+    const auto& op = ops[index];
+    if (op.kind != OpKind::Mla && op.kind != OpKind::HostTvm && !result.feeds_compute[index]) {
+      continue;
+    }
+    for (const auto input : op.inputs) {
+      if (const auto producer = provenance(input); producer && *producer < ops.size()) {
+        result.feeds_compute[*producer] = true;
+      }
+    }
+    for (const auto dependency : op.dependencies) {
+      if (dependency < ops.size()) {
+        result.feeds_compute[dependency] = true;
+      }
+    }
+  }
+  return result;
+}
+
 void implementation_flags(const ModelExecutionPlan& plan, const std::vector<OpId>& chain,
                           bool* align_c16, bool* cblock) {
   *align_c16 = false;
@@ -830,6 +910,16 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
     public_values.emplace(output.value_id);
   }
 
+  // Dataflow decides the egress boundary. CVU work downstream of the last MLA is inference when it
+  // feeds a compute op (MLA or A65) and post-processing otherwise; rank only orders commands.
+  const auto dataflow = last_mla_dataflow(semantic, producers);
+  const auto role_for = [&](const std::vector<OpId>& op_ids) {
+    return std::any_of(op_ids.begin(), op_ids.end(),
+                       [&](const OpId id) { return dataflow.feeds_compute[id]; })
+               ? PhysicalCommandRole::Interstitial
+               : PhysicalCommandRole::Egress;
+  };
+
   std::unordered_set<OpId> claimed;
   std::vector<DraftCommand> drafts;
   PhysicalCohortId next_cohort_id = 0U;
@@ -842,8 +932,6 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
     }
     const auto ingress_role =
         mla_ordinal == 0U ? PhysicalCommandRole::Ingress : PhysicalCommandRole::Interstitial;
-    const auto egress_role = mla_ordinal + 1U == mla_count ? PhysicalCommandRole::Egress
-                                                           : PhysicalCommandRole::Interstitial;
     std::vector<Lane> ingress;
     std::vector<IngressFrontierValue> ingress_frontier;
     for (const auto input : mla.inputs) {
@@ -875,9 +963,40 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
       egress.push_back({static_cast<std::uint32_t>(ordinal),
                         egress_lane(semantic, consumers, egress_frontier[ordinal], public_values)});
     }
-    if (!add_aligned_cohorts(semantic, std::move(egress), false, egress_role, &claimed, &drafts,
-                             &next_cohort_id, error)) {
-      return std::nullopt;
+    if (mla_ordinal + 1U < mla_count) {
+      if (!add_aligned_cohorts(semantic, std::move(egress), false,
+                               PhysicalCommandRole::Interstitial, &claimed, &drafts,
+                               &next_cohort_id, error)) {
+        return std::nullopt;
+      }
+    } else {
+      // Each lane takes its own role: a lane that feeds a compute op stays inference, the others
+      // are the terminal egress. A frontier holding both is lowered per role, so no cohort or
+      // command mixes the two.
+      std::vector<Lane> feeding;
+      std::vector<Lane> terminal;
+      for (const auto& lane : egress) {
+        (role_for(lane.operations) == PhysicalCommandRole::Interstitial ? feeding : terminal)
+            .push_back(lane);
+      }
+      const bool mixed = !feeding.empty() &&
+                         std::any_of(terminal.begin(), terminal.end(),
+                                     [](const Lane& lane) { return !lane.operations.empty(); });
+      if (!mixed) {
+        const auto role =
+            feeding.empty() ? PhysicalCommandRole::Egress : PhysicalCommandRole::Interstitial;
+        if (!add_aligned_cohorts(semantic, std::move(egress), false, role, &claimed, &drafts,
+                                 &next_cohort_id, error)) {
+          return std::nullopt;
+        }
+      } else if (!add_aligned_cohorts(semantic, std::move(feeding), false,
+                                      PhysicalCommandRole::Interstitial, &claimed, &drafts,
+                                      &next_cohort_id, error) ||
+                 !add_aligned_cohorts(semantic, std::move(terminal), false,
+                                      PhysicalCommandRole::Egress, &claimed, &drafts,
+                                      &next_cohort_id, error)) {
+        return std::nullopt;
+      }
     }
     ++mla_ordinal;
   }
@@ -910,9 +1029,12 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
     residual_pairs.emplace_back(first.id, *second_id);
   }
   for (const auto& [first, second] : residual_pairs) {
-    if (!add_aligned_cohorts(semantic, {{0U, {first, second}}}, false,
-                             PhysicalCommandRole::Interstitial, &claimed, &drafts, &next_cohort_id,
-                             error)) {
+    const auto pair_role =
+        dataflow.a65_downstream_of_last_mla && dataflow.downstream_of_last_mla[first]
+            ? role_for({first, second})
+            : PhysicalCommandRole::Interstitial;
+    if (!add_aligned_cohorts(semantic, {{0U, {first, second}}}, false, pair_role, &claimed, &drafts,
+                             &next_cohort_id, error)) {
       return std::nullopt;
     }
   }
@@ -934,8 +1056,13 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
     draft.cohort_id = next_cohort_id++;
     draft.stable_order = op.sequence;
     draft.engine = engine_for(op);
-    draft.role = draft.engine == PhysicalEngine::Cvu ? PhysicalCommandRole::Interstitial
-                                                     : PhysicalCommandRole::NonCvu;
+    if (draft.engine != PhysicalEngine::Cvu) {
+      draft.role = PhysicalCommandRole::NonCvu;
+    } else {
+      draft.role = dataflow.a65_downstream_of_last_mla && dataflow.downstream_of_last_mla[op.id]
+                       ? role_for({op.id})
+                       : PhysicalCommandRole::Interstitial;
+    }
     draft.implementation_id = identity;
     const auto batch = batch_for(op);
     if (batch <= 0 ||

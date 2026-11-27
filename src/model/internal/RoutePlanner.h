@@ -7,8 +7,10 @@
 #include "model/internal/ModelPack.h"
 
 #include "pipeline/internal/RenderedStageQueryTypes.h"
+#include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/RouteGraph.h"
 
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <vector>
@@ -223,6 +225,8 @@ struct RouteCapability {
   bool has_external_detess = false;
   bool has_external_dequant = false;
   bool has_external_post_cast = false;
+  // A cast moved into inference still balances the ingress cast for cast symmetry.
+  bool inference_tail_cast = false;
   bool has_external_boxdecode = false;
   bool has_strict_boxdecode_route = false;
 
@@ -356,6 +360,13 @@ RouteCapability extract_route_capability(const ModelPack& pack,
 RouteSelection plan_route_selection(const Model::Options& options,
                                     const PreprocessPlannerResult& preprocess_plan,
                                     const RouteCapability& capability);
+
+// Non-compute plugins downstream of the last MLA (along MPK producer-to-consumer edges, through
+// views, CVU work or A65) whose outputs reach an MLA or A65 input. Materialized post work in this
+// set is inference. The result has one entry per plugin and is all-false when the index is out of
+// range.
+std::vector<bool> compute_feeding_tail_plugins(const pipeline_internal::sima::MpkContract& contract,
+                                               std::size_t last_mla_plugin_index);
 
 std::string route_capability_debug_string(const RouteCapability& capability);
 std::string route_selection_debug_string(const RouteSelection& selection);
