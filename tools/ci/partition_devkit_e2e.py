@@ -82,6 +82,8 @@ FIXTURES = (
     ('SIMA_DETR_RESNET50_TAR', 'detr_resnet_50', 'w8a8_mixed', {'detr_resnet50_multi_output_test'}),
     ({'backbone': 'SIMA_RF_DETR_BACKBONE_TAR', 'decoder': 'SIMA_RF_DETR_DECODER_TAR'},
      'rf_detr_small', 'w8a16_w16a16', {'rf_detr_small_pipeline_test'}),
+    ({'vector_estimator': 'SIMA_SUPERTONIC_VECTOR_TAR', 'vocoder': 'SIMA_SUPERTONIC_VOCODER_TAR'},
+     'supertonic_3', 'w8a16_w16a16', {'supertonic3_batch2_test'}),
 )
 
 

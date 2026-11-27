@@ -178,6 +178,23 @@ def test_fixtures_are_prepared_only_for_selected_tests(monkeypatch):
     assert preset['SIMA_RF_DETR_DECODER_TAR'] == '/d.tar.gz'
 
 
+def test_supertonic_fixture_prepares_both_components(monkeypatch):
+    calls = []
+
+    def fake_prepare(model_id, variant, output, components=()):
+        calls.append((model_id, variant, tuple(components)))
+        return [f'/fixtures/{c}_mpk.tar.gz' for c in components]
+
+    monkeypatch.setattr(partitioner, 'prepare_fixture', fake_prepare)
+    env = {}
+    partitioner.prepare_selected_fixtures(['supertonic3_batch2_test'], env, '/tmp')
+    assert calls == [('supertonic_3', 'w8a16_w16a16', ('vector_estimator', 'vocoder'))]
+    assert env == {
+        'SIMA_SUPERTONIC_VECTOR_TAR': '/fixtures/vector_estimator_mpk.tar.gz',
+        'SIMA_SUPERTONIC_VOCODER_TAR': '/fixtures/vocoder_mpk.tar.gz',
+    }
+
+
 def test_real_ctest_partition_executes_all_selected_tests(tmp_path):
     # Uses harmless host Python registrations; no aarch64 binary is executed.
     marker = tmp_path / 'executed'

@@ -212,6 +212,8 @@ This is the full environment-variable inventory detected from source, tests, tut
 - `SIMA_STEP_LOG`
 - `SIMA_STRESS_ITERS`
 - `SIMA_STRESS_MODEL_TAR`
+- `SIMA_SUPERTONIC_VECTOR_TAR`
+- `SIMA_SUPERTONIC_VOCODER_TAR`
 - `SIMA_SYNC_ITERS`
 - `SIMA_SYNC_LOG_EVERY`
 - `SIMA_SYNC_NUM_BUFFERS`
