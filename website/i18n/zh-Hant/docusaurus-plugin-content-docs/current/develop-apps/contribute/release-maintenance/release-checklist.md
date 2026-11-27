@@ -42,11 +42,6 @@ slug: /develop-apps/contribute/release-checklist
 
 在發布流程中不允許存在「已知崩潰」列表。任何崩潰回歸都會阻止發布，直到修復為止。
 
-## 必需的狀態檢查
-
-建立發布標籤之前，Vulcan CI（`.github/workflows/vulcan-ci.yml`）必須在要加上標籤的那個提交上通過。
-檢查方式請見發布流程的步驟 5。
-
 ## 排程測試通道
 
 這些通道不會阻止發布。崩潰/正確性、壓力、消毒器和模糊測試每晚執行。
@@ -74,22 +69,55 @@ slug: /develop-apps/contribute/release-checklist
 
 ## 發布流程
 
-直接以正式標籤發布，例如 `v0.7.0`。不要建立發布候選版本標籤。Release 工作流程
-（**Actions → Release**）會建立或重複使用 `release-X.Y`，將標籤加在其最新提交上，並建立 GitHub 發布版草稿。
-以下步驟是在新版本線上發布 0.7.0。在既有版本線上的修補發布（例如 0.6.3）在步驟 3 和 6 有所不同。
+直接以正式標籤發布，例如 `v0.7.0`。不要建立發布候選版本標籤。主要發布與修補發布使用同一個工作流程
+**Actions → Release**。它會為新版本線從 `main` 建立 `release-X.Y`，或重複使用既有的 `release-X.Y`，
+將標籤加在該分支的最新提交上，並建立 GitHub 發布版草稿。它的第一個作業會檢查該提交的 `package-version` 是否等於 `tag`。
+它要求所有 Target Release 為 `core-X.Y.Z` 的 issue 皆為 Done，之後將它們的 Release Status 設為 `released`。
+
+### 主要發布
+
+此範例在新版本線上發布 `v0.7.0`。
 
 1. 在 `develop` 上，將 `deps/manifest.json` 中的 `package-version` 設為 `0.7.0`。當阻止發布的條件要求時，更新 `platform-version`、`modelzoo-version` 和 `abi-version`，並依照「最新文件版本」的說明更新發布資料。
 2. 透過拉取請求將 `develop` 合併到 `main`。
-3. 找出要加上標籤的提交。先執行 `git fetch origin`。
-   - 新版本線：工作流程會從 `main` 的最新提交建立 `release-0.7`。該提交為 `git rev-parse origin/main`。
-   - 既有版本線：透過拉取請求將 `main` 合併到 `release-0.6`。由於 `branch_exists_behavior` 預設為 `reuse`，工作流程會重複使用 `release-0.6` 並將標籤加在其最新提交上。該提交為 `git rev-parse origin/release-0.6`。
+3. 執行 `git fetch origin`。要加上標籤的提交為 `git rev-parse origin/main`。在標籤建立之前，不要將任何內容合併到 `main`。
+4. 在該提交上執行「加上標籤之前」中的檢查。
+5. 開啟 **Actions → Release → Run workflow**。將 `release_line` 設為 `0.7`、`tag` 設為 `0.7.0`，保留 `main` 作為 `source_branch`，`prerelease` 保持關閉、`latest` 保持開啟。工作流程會從 `main` 建立 `release-0.7`，加上 `v0.7.0` 標籤並建立發布版草稿。
+6. 接著進行「加上標籤之後」和「公開發布版」中的步驟。
 
-   在標籤建立之前，不要將任何內容合併到該分支。
-4. 檢查該提交的版本。`git show <commit>:deps/manifest.json` 必須顯示 `"package-version": "0.7.0"`。Release 工作流程也會在第一個作業中執行相同的檢查。若版本不一致，它會在建立分支或標籤之前、以及將 issue 標記為已發布之前停止。
-5. 確認 Vulcan CI 已在該提交上通過。`gh run list --repo sima-neat/core --workflow vulcan-ci.yml --commit <commit>` 會列出其執行。在 `main` 或發布分支上成功的執行也算數。若沒有，請在步驟 3 的分支上以 `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref main` 啟動 Vulcan CI，修補發布則使用 `--ref release-0.6`。確認新執行的 `headSha` 就是該提交，然後以 `gh run watch <run-id> --repo sima-neat/core --exit-status` 等待結果。在該提交的執行通過之前，不要加上標籤。
-6. 開啟 **Actions → Release → Run workflow**。將 `release_line` 設為 `0.7`、`tag` 設為 `0.7.0`，保留 `main` 作為 `source_branch`，`prerelease` 保持關閉、`latest` 保持開啟。發布 0.6.3 時，將 `release_line` 設為 `0.6`、`tag` 設為 `0.6.3`，若較新的版本線已發布，請關閉 `latest`。工作流程會加上 `v0.7.0` 標籤並建立發布版草稿。它要求所有 Target Release 為 `core-0.7.0` 的 issue 皆為 Done，之後將它們的 Release Status 設為 `released`。若沒有任何 issue 具有該 Target Release，此檢查也會失敗。確認執行摘要中的 **Target SHA** 是步驟 3 的提交。若不是，請不要發布草稿。
-7. 以 `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref v0.7.0` 對該標籤啟動 Vulcan CI。由工作流程加上的標籤本身不會啟動任何工作流程。等待 `https://artifacts.neat.sima.ai/core/v0.7.0/latest.tag` 顯示加上標籤的提交。此執行會發布 `sima-cli neat install core@v0.7.0` 所安裝的套件以及離線套件組。
-8. 在發布版草稿中填寫並發布版本資訊，並開立發布後續問題。
+### 修補發布
+
+此範例在既有的 `release-0.6` 上發布 `v0.6.3`。
+
+1. 準備 `release-0.6`：
+   - 若 `main` 仍在 0.6 版本線上，請依照主要發布的步驟 1，在 `develop` 上將 `package-version` 設為 `0.6.3`，將 `develop` 合併到 `main`，然後透過拉取請求將 `main` 合併到 `release-0.6`。
+   - 若 `main` 已進入 0.7 版本線，只將預定的修正和版本更新帶入 `release-0.6`。從一個以 `git cherry-pick -x` 挑選修正、並將 `package-version` 設為 `0.6.3` 的分支，開啟合併到 `release-0.6` 的拉取請求。
+2. 執行 `git fetch origin`。要加上標籤的提交為 `git rev-parse origin/release-0.6`。在標籤建立之前，不要將任何內容合併到 `release-0.6`。
+3. 在該提交上執行「加上標籤之前」中的檢查。
+4. 開啟 **Actions → Release → Run workflow**。將 `release_line` 設為 `0.6`、`tag` 設為 `0.6.3`，保留 `main` 作為 `source_branch`，`prerelease` 保持關閉。若較新的版本線已發布，請關閉 `latest`。由於 `branch_exists_behavior` 預設為 `reuse`，工作流程會重複使用 `release-0.6`，在其最新提交上加上 `v0.6.3` 標籤並建立發布版草稿。
+5. 接著進行「加上標籤之後」和「公開發布版」中的步驟。
+
+### 共同步驟
+
+`<commit>` 是主要發布步驟 3 或修補發布步驟 2 中要加上標籤的提交。
+命令中使用 `0.7.0`；修補發布請改用其版本，例如 `0.6.3`。
+
+#### 加上標籤之前
+
+1. 檢查版本。`git show <commit>:deps/manifest.json` 必須顯示 `"package-version": "0.7.0"`。若不是，Release 工作流程會在第一個作業中、建立分支或標籤之前停止。
+2. 確認標準 Vulcan CI 已在該提交上通過。`gh run list --repo sima-neat/core --workflow vulcan-ci.yml --commit <commit>` 會列出其執行，在 `main` 或發布分支上既有的成功執行可以重複使用。若沒有，請以 `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref main` 啟動，修補發布則使用 `--ref release-0.6`。確認新執行的 `headSha` 就是該提交，然後以 `gh run watch <run-id> --repo sima-neat/core --exit-status` 等待結果。
+3. 檢查 issue 閘道。在 Neat Releases 專案（`https://github.com/orgs/sima-neat/projects/6`）中，必須至少有一個 issue 的 Target Release 為 `core-0.7.0`，且所有具有該 Target Release 的 issue 皆為 Done。開啟 `dry_run` 的 Release 執行會進行此檢查與版本檢查，但不會推送任何內容，也不會變更 issue。
+
+#### 加上標籤之後
+
+1. 確認 Release 執行摘要中的 **Target SHA** 就是該提交。若不是，請不要發布草稿。
+2. 以 `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref v0.7.0` 對該標籤啟動標準 Vulcan CI。由工作流程加上的標籤本身不會啟動任何工作流程。此執行會發布 `sima-cli neat install core@v0.7.0` 所安裝的帶版本套件以及離線套件組。
+3. 以 `gh run watch <run-id> --repo sima-neat/core --exit-status` 等待整個執行成功，包括 `Publish develop and release offline bundles` 作業。`latest.tag` 會在該作業開始之前更新，因此無法用來判斷執行已完成。
+
+#### 公開發布版
+
+1. 開啟 GitHub 發布版草稿，檢查版本資訊後按一下 **Publish release**。
+2. 開立發布後續問題。
 
 ## 運營注意事項
 

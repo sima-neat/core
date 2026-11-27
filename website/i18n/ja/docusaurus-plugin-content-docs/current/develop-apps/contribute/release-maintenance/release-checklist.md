@@ -42,11 +42,6 @@ slug: /develop-apps/contribute/release-checklist
 
 リリースフローに「既知のクラッシャー」リストは許可されません。クラッシュ回帰が発生した場合、修正されるまでリリースはブロックされます。
 
-## 必要なステータスチェック
-
-リリースタグを作成する前に、タグを付けるコミットそのもので Vulcan CI（`.github/workflows/vulcan-ci.yml`）が
-合格している必要があります。確認方法はリリースフローの手順 5 に記載しています。
-
 ## スケジュール実行のテストレーン
 
 これらのレーンはリリースをブロックしません。クラッシュ/正当性、ストレステスト、サニタイザー、ファズテストは毎晩実行されます。
@@ -74,22 +69,56 @@ GitHub リポジトリの設定を行います。
 
 ## リリースフロー
 
-`v0.7.0` のような正式なタグでリリースします。リリース候補のタグは作成しません。Release ワークフロー
-（**Actions → Release**）は `release-X.Y` を作成または再利用し、その最新のコミットにタグを付けて、GitHub リリースの下書きを作成します。
-以下の手順は、新しいラインで 0.7.0 をリリースする場合です。既存のラインでのパッチリリース（たとえば 0.6.3）では、手順 3 と 6 が異なります。
+`v0.7.0` のような正式なタグでリリースします。リリース候補のタグは作成しません。メジャーリリースとパッチリリースは
+同じワークフロー **Actions → Release** を使います。このワークフローは、新しいラインでは `main` から `release-X.Y` を作成し、
+既存のラインでは既存の `release-X.Y` を再利用して、そのブランチの最新のコミットにタグを付け、GitHub リリースの下書きを作成します。
+最初のジョブでは、そのコミットの `package-version` が `tag` と等しいことを確認します。Target Release が `core-X.Y.Z` の
+すべての issue が Done であることが必要で、その後それらの Release Status を `released` に設定します。
+
+### メジャーリリース
+
+この例では、新しいラインで `v0.7.0` をリリースします。
 
 1. `develop` で、`deps/manifest.json` の `package-version` を `0.7.0` に設定します。リリースをブロックする条件で必要な場合は `platform-version`、`modelzoo-version`、`abi-version` を更新し、「最新ドキュメントのバージョン」の説明に従ってリリースデータを更新します。
 2. プルリクエストで `develop` を `main` にマージします。
-3. タグを付けるコミットを特定します。先に `git fetch origin` を実行します。
-   - 新しいライン：ワークフローは `main` の最新のコミットから `release-0.7` を作成します。コミットは `git rev-parse origin/main` です。
-   - 既存のライン：プルリクエストで `main` を `release-0.6` にマージします。`branch_exists_behavior` の既定値が `reuse` であるため、ワークフローは `release-0.6` を再利用し、その最新のコミットにタグを付けます。コミットは `git rev-parse origin/release-0.6` です。
+3. `git fetch origin` を実行します。タグを付けるコミットは `git rev-parse origin/main` です。タグが作成されるまで、`main` には何もマージしません。
+4. そのコミットで「タグ付けの前」のチェックを実行します。
+5. **Actions → Release → Run workflow** を開きます。`release_line` を `0.7`、`tag` を `0.7.0` に設定し、`main` を `source_branch` のままにして、`prerelease` はオフ、`latest` はオンのままにします。ワークフローは `main` から `release-0.7` を作成し、`v0.7.0` タグを付けて、リリースの下書きを作成します。
+6. 「タグ付けの後」と「公開」に進みます。
 
-   タグが作成されるまで、そのブランチには何もマージしません。
-4. そのコミットのバージョンを確認します。`git show <commit>:deps/manifest.json` に `"package-version": "0.7.0"` が表示される必要があります。Release ワークフローも最初のジョブで同じチェックを行います。バージョンが一致しない場合は、ブランチやタグを作成する前、また issue をリリース済みにする前に停止します。
-5. そのコミットそのもので Vulcan CI が合格していることを確認します。`gh run list --repo sima-neat/core --workflow vulcan-ci.yml --commit <commit>` で実行の一覧を確認できます。`main` またはリリースブランチ上の成功した実行も有効です。なければ、手順 3 のブランチで `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref main` を実行して Vulcan CI を開始します。パッチリリースでは `--ref release-0.6` を使います。新しい実行の `headSha` がそのコミットであることを確認し、`gh run watch <run-id> --repo sima-neat/core --exit-status` で完了を待ちます。そのコミットでの実行が合格するまでタグを付けません。
-6. **Actions → Release → Run workflow** を開きます。`release_line` を `0.7`、`tag` を `0.7.0` に設定し、`main` を `source_branch` のままにして、`prerelease` はオフ、`latest` はオンのままにします。0.6.3 の場合は `release_line` を `0.6`、`tag` を `0.6.3` に設定し、新しいラインがすでにリリースされていれば `latest` をオフにします。ワークフローは `v0.7.0` タグを付け、リリースの下書きを作成します。Target Release が `core-0.7.0` のすべての issue が Done であることが必要で、その後それらの Release Status を `released` に設定します。その Target Release を持つ issue が 1 つもない場合も、このチェックは失敗します。実行サマリーの **Target SHA** が手順 3 のコミットであることを確認します。一致しない場合は、リリースの下書きを公開しません。
-7. `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref v0.7.0` でタグに対して Vulcan CI を開始します。ワークフローが付けたタグだけでは、ワークフローの実行は開始されません。`https://artifacts.neat.sima.ai/core/v0.7.0/latest.tag` にタグを付けたコミットが表示されるまで待ちます。この実行により、`sima-cli neat install core@v0.7.0` がインストールするパッケージとオフラインバンドルが公開されます。
-8. リリースの下書きにリリースノートを記載して公開し、リリース後のフォローアップの issue を作成します。
+### パッチリリース
+
+この例では、既存の `release-0.6` で `v0.6.3` をリリースします。
+
+1. `release-0.6` を準備します。
+   - `main` がまだ 0.6 のラインにある場合は、メジャーリリースの手順 1 と同様に `develop` で `package-version` を `0.6.3` に設定し、`develop` を `main` にマージしてから、プルリクエストで `main` を `release-0.6` にマージします。
+   - `main` がすでに 0.7 に移行している場合は、意図した修正とバージョンの更新だけを `release-0.6` に取り込みます。修正を `git cherry-pick -x` で取り込み、`package-version` を `0.6.3` に設定したブランチから、`release-0.6` へのプルリクエストを作成します。
+2. `git fetch origin` を実行します。タグを付けるコミットは `git rev-parse origin/release-0.6` です。タグが作成されるまで、`release-0.6` には何もマージしません。
+3. そのコミットで「タグ付けの前」のチェックを実行します。
+4. **Actions → Release → Run workflow** を開きます。`release_line` を `0.6`、`tag` を `0.6.3` に設定し、`main` を `source_branch` のままにして、`prerelease` はオフのままにします。新しいラインがすでに公開されている場合は `latest` をオフにします。`branch_exists_behavior` の既定値が `reuse` であるため、ワークフローは `release-0.6` を再利用し、その最新のコミットに `v0.6.3` タグを付けて、リリースの下書きを作成します。
+5. 「タグ付けの後」と「公開」に進みます。
+
+### 共通の手順
+
+`<commit>` は、メジャーリリースの手順 3 またはパッチリリースの手順 2 で特定した、タグを付けるコミットです。
+コマンドでは `0.7.0` を使っています。パッチリリースでは、そのバージョン（たとえば `0.6.3`）を使います。
+
+#### タグ付けの前
+
+1. バージョンを確認します。`git show <commit>:deps/manifest.json` に `"package-version": "0.7.0"` が表示される必要があります。表示されない場合、Release ワークフローは最初のジョブで、ブランチやタグを作成する前に停止します。
+2. そのコミットそのもので標準の Vulcan CI が合格していることを確認します。`gh run list --repo sima-neat/core --workflow vulcan-ci.yml --commit <commit>` で実行の一覧を確認でき、`main` またはリリースブランチ上の既存の成功した実行を再利用できます。なければ、`gh workflow run vulcan-ci.yml --repo sima-neat/core --ref main` で実行を開始します。パッチリリースでは `--ref release-0.6` を使います。新しい実行の `headSha` がそのコミットであることを確認し、`gh run watch <run-id> --repo sima-neat/core --exit-status` で完了を待ちます。
+3. issue ゲートを確認します。Neat Releases プロジェクト（`https://github.com/orgs/sima-neat/projects/6`）で、Target Release が `core-0.7.0` の issue が少なくとも 1 つあり、その Target Release を持つすべての issue が Done である必要があります。`dry_run` をオンにした Release の実行では、何もプッシュせず issue も変更せずに、このチェックとバージョンのチェックを行います。
+
+#### タグ付けの後
+
+1. Release の実行サマリーの **Target SHA** がそのコミットであることを確認します。一致しない場合は、リリースの下書きを公開しません。
+2. `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref v0.7.0` でタグに対して標準の Vulcan CI を開始します。ワークフローが付けたタグだけでは、ワークフローの実行は開始されません。この実行により、`sima-cli neat install core@v0.7.0` がインストールするバージョン付きのパッケージとオフラインバンドルが公開されます。
+3. `gh run watch <run-id> --repo sima-neat/core --exit-status` で、`Publish develop and release offline bundles` ジョブを含む実行全体が成功するまで待ちます。`latest.tag` はこのジョブの開始前に更新されるため、実行の完了を示すものではありません。
+
+#### 公開
+
+1. GitHub リリースの下書きを開き、リリースノートを確認して **Publish release** をクリックします。
+2. リリース後のフォローアップの issue を作成します。
 
 ## 運用上の注意点
 

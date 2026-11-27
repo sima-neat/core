@@ -42,11 +42,6 @@ slug: /develop-apps/contribute/release-checklist
 
 릴리스 흐름에서 "알려진 충돌 목록"은 허용되지 않습니다. 모든 충돌 회귀는 수정될 때까지 릴리스를 차단합니다.
 
-## 필수 상태 검사
-
-릴리스 태그를 만들기 전에 태그를 지정할 바로 그 커밋에서 Vulcan CI(`.github/workflows/vulcan-ci.yml`)가
-통과해야 합니다. 확인 방법은 릴리스 흐름의 5단계에 있습니다.
-
 ## 예약 실행 테스트 레인
 
 이 레인은 릴리스를 차단하지 않습니다. 충돌/정확성, 스트레스, 정적 분석, 퍼즈 테스트는 매일 밤 실행됩니다.
@@ -74,22 +69,56 @@ GitHub 저장소 설정을 구성합니다.
 
 ## 릴리스 흐름
 
-`v0.7.0`과 같은 최종 태그로 릴리스합니다. 릴리스 후보 태그는 만들지 않습니다. Release 워크플로
-(**Actions → Release**)는 `release-X.Y`를 만들거나 재사용하고, 그 최신 커밋에 태그를 지정한 뒤 GitHub 릴리스 초안을 만듭니다.
-아래 단계는 새 라인에서 0.7.0을 릴리스하는 경우입니다. 기존 라인의 패치 릴리스(예: 0.6.3)는 3단계와 6단계가 다릅니다.
+`v0.7.0`과 같은 최종 태그로 릴리스합니다. 릴리스 후보 태그는 만들지 않습니다. 메이저 릴리스와 패치 릴리스는
+같은 워크플로인 **Actions → Release**를 사용합니다. 이 워크플로는 새 라인이면 `main`에서 `release-X.Y`를 만들고,
+기존 라인이면 기존 `release-X.Y`를 재사용하며, 그 브랜치의 최신 커밋에 태그를 지정한 뒤 GitHub 릴리스 초안을 만듭니다.
+첫 번째 작업은 그 커밋의 `package-version`이 `tag`와 같은지 확인합니다. Target Release가 `core-X.Y.Z`인 모든 이슈가
+Done이어야 하며, 그 후 해당 이슈의 Release Status를 `released`로 설정합니다.
+
+### 메이저 릴리스
+
+이 예시는 새 라인에서 `v0.7.0`을 릴리스합니다.
 
 1. `develop`에서 `deps/manifest.json`의 `package-version`을 `0.7.0`으로 설정합니다. 릴리스 차단 조건에서 요구하면 `platform-version`, `modelzoo-version`, `abi-version`을 업데이트하고, 최신 문서 버전 절의 설명에 따라 릴리스 데이터를 업데이트합니다.
 2. 풀 리퀘스트로 `develop`을 `main`에 병합합니다.
-3. 태그를 지정할 커밋을 확인합니다. 먼저 `git fetch origin`을 실행합니다.
-   - 새 라인: 워크플로가 `main`의 최신 커밋에서 `release-0.7`을 만듭니다. 커밋은 `git rev-parse origin/main`입니다.
-   - 기존 라인: 풀 리퀘스트로 `main`을 `release-0.6`에 병합합니다. `branch_exists_behavior`의 기본값이 `reuse`이므로 워크플로는 `release-0.6`을 재사용하고 그 최신 커밋에 태그를 지정합니다. 커밋은 `git rev-parse origin/release-0.6`입니다.
+3. `git fetch origin`을 실행합니다. 태그를 지정할 커밋은 `git rev-parse origin/main`입니다. 태그가 만들어질 때까지 `main`에는 아무것도 병합하지 않습니다.
+4. 그 커밋에서 태그 지정 전 절의 검사를 실행합니다.
+5. **Actions → Release → Run workflow**를 엽니다. `release_line`을 `0.7`로, `tag`를 `0.7.0`으로 설정하고, `main`을 `source_branch`로 그대로 두며, `prerelease`는 끄고 `latest`는 켠 상태로 둡니다. 워크플로는 `main`에서 `release-0.7`을 만들고 `v0.7.0` 태그를 지정한 뒤 릴리스 초안을 만듭니다.
+6. 태그 지정 후 절과 게시 절로 이어서 진행합니다.
 
-   태그가 만들어질 때까지 그 브랜치에는 아무것도 병합하지 않습니다.
-4. 그 커밋의 버전을 확인합니다. `git show <commit>:deps/manifest.json`에 `"package-version": "0.7.0"`이 표시되어야 합니다. Release 워크플로도 첫 번째 작업에서 같은 검사를 수행합니다. 버전이 다르면 브랜치나 태그를 만들기 전, 그리고 이슈를 릴리스됨으로 표시하기 전에 중단합니다.
-5. 바로 그 커밋에서 Vulcan CI가 통과했는지 확인합니다. `gh run list --repo sima-neat/core --workflow vulcan-ci.yml --commit <commit>`으로 실행 목록을 볼 수 있습니다. `main` 또는 릴리스 브랜치에서 성공한 실행도 인정됩니다. 없으면 3단계의 브랜치에서 `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref main`으로 Vulcan CI를 시작합니다. 패치 릴리스에서는 `--ref release-0.6`을 사용합니다. 새 실행의 `headSha`가 그 커밋인지 확인한 뒤 `gh run watch <run-id> --repo sima-neat/core --exit-status`로 완료를 기다립니다. 그 커밋의 실행이 통과할 때까지 태그를 지정하지 않습니다.
-6. **Actions → Release → Run workflow**를 엽니다. `release_line`을 `0.7`로, `tag`를 `0.7.0`으로 설정하고, `main`을 `source_branch`로 그대로 두며, `prerelease`는 끄고 `latest`는 켠 상태로 둡니다. 0.6.3의 경우 `release_line`을 `0.6`으로, `tag`를 `0.6.3`으로 설정하고, 더 새로운 라인이 이미 릴리스되었다면 `latest`를 끕니다. 워크플로는 `v0.7.0` 태그를 지정하고 릴리스 초안을 만듭니다. Target Release가 `core-0.7.0`인 모든 이슈가 Done이어야 하며, 그 후 해당 이슈의 Release Status를 `released`로 설정합니다. 해당 Target Release를 가진 이슈가 하나도 없어도 이 검사는 실패합니다. 실행 요약의 **Target SHA**가 3단계의 커밋인지 확인합니다. 다르면 릴리스 초안을 게시하지 않습니다.
-7. `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref v0.7.0`으로 태그에 대해 Vulcan CI를 시작합니다. 워크플로가 지정한 태그만으로는 워크플로 실행이 시작되지 않습니다. `https://artifacts.neat.sima.ai/core/v0.7.0/latest.tag`에 태그를 지정한 커밋이 표시될 때까지 기다립니다. 이 실행은 `sima-cli neat install core@v0.7.0`이 설치하는 패키지와 오프라인 번들을 게시합니다.
-8. 릴리스 초안에 릴리스 노트를 작성해 게시하고 릴리스 후 후속 이슈를 엽니다.
+### 패치 릴리스
+
+이 예시는 기존 `release-0.6`에서 `v0.6.3`을 릴리스합니다.
+
+1. `release-0.6`을 준비합니다.
+   - `main`이 아직 0.6 라인에 있으면 메이저 릴리스의 1단계처럼 `develop`에서 `package-version`을 `0.6.3`으로 설정하고, `develop`을 `main`에 병합한 다음, 풀 리퀘스트로 `main`을 `release-0.6`에 병합합니다.
+   - `main`이 이미 0.7로 넘어갔다면 의도한 수정 사항과 버전 변경만 `release-0.6`에 가져옵니다. 수정 사항을 `git cherry-pick -x`로 가져오고 `package-version`을 `0.6.3`으로 설정한 브랜치에서 `release-0.6`으로 풀 리퀘스트를 엽니다.
+2. `git fetch origin`을 실행합니다. 태그를 지정할 커밋은 `git rev-parse origin/release-0.6`입니다. 태그가 만들어질 때까지 `release-0.6`에는 아무것도 병합하지 않습니다.
+3. 그 커밋에서 태그 지정 전 절의 검사를 실행합니다.
+4. **Actions → Release → Run workflow**를 엽니다. `release_line`을 `0.6`으로, `tag`를 `0.6.3`으로 설정하고, `main`을 `source_branch`로 그대로 두며, `prerelease`는 끈 상태로 둡니다. 더 새로운 라인이 이미 게시되었다면 `latest`를 끕니다. `branch_exists_behavior`의 기본값이 `reuse`이므로 워크플로는 `release-0.6`을 재사용하고, 그 최신 커밋에 `v0.6.3` 태그를 지정한 뒤 릴리스 초안을 만듭니다.
+5. 태그 지정 후 절과 게시 절로 이어서 진행합니다.
+
+### 공통 단계
+
+`<commit>`은 메이저 릴리스의 3단계 또는 패치 릴리스의 2단계에서 확인한, 태그를 지정할 커밋입니다.
+명령은 `0.7.0`을 사용합니다. 패치 릴리스에서는 해당 버전(예: `0.6.3`)을 사용합니다.
+
+#### 태그 지정 전
+
+1. 버전을 확인합니다. `git show <commit>:deps/manifest.json`에 `"package-version": "0.7.0"`이 표시되어야 합니다. 그렇지 않으면 Release 워크플로는 첫 번째 작업에서 브랜치나 태그를 만들기 전에 중단합니다.
+2. 바로 그 커밋에서 표준 Vulcan CI가 통과했는지 확인합니다. `gh run list --repo sima-neat/core --workflow vulcan-ci.yml --commit <commit>`으로 실행 목록을 볼 수 있으며, `main` 또는 릴리스 브랜치에서 이미 성공한 실행을 재사용할 수 있습니다. 없으면 `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref main`으로 실행을 시작합니다. 패치 릴리스에서는 `--ref release-0.6`을 사용합니다. 새 실행의 `headSha`가 그 커밋인지 확인한 뒤 `gh run watch <run-id> --repo sima-neat/core --exit-status`로 완료를 기다립니다.
+3. 이슈 게이트를 확인합니다. Neat Releases 프로젝트(`https://github.com/orgs/sima-neat/projects/6`)에서 Target Release가 `core-0.7.0`인 이슈가 하나 이상 있어야 하며, 해당 Target Release를 가진 모든 이슈가 Done이어야 합니다. `dry_run`을 켠 Release 실행은 아무것도 푸시하거나 이슈를 변경하지 않고 이 검사와 버전 검사를 수행합니다.
+
+#### 태그 지정 후
+
+1. Release 실행 요약의 **Target SHA**가 그 커밋인지 확인합니다. 다르면 릴리스 초안을 게시하지 않습니다.
+2. `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref v0.7.0`으로 태그에 대해 표준 Vulcan CI를 시작합니다. 워크플로가 지정한 태그만으로는 워크플로 실행이 시작되지 않습니다. 이 실행은 `sima-cli neat install core@v0.7.0`이 설치하는 버전별 패키지와 오프라인 번들을 게시합니다.
+3. `Publish develop and release offline bundles` 작업을 포함한 전체 실행이 성공할 때까지 `gh run watch <run-id> --repo sima-neat/core --exit-status`로 기다립니다. `latest.tag`는 그 작업이 시작되기 전에 업데이트되므로 실행이 끝났음을 보여 주지 않습니다.
+
+#### 게시
+
+1. GitHub 릴리스 초안을 열고 릴리스 노트를 확인한 뒤 **Publish release**를 클릭합니다.
+2. 릴리스 후 후속 이슈를 엽니다.
 
 ## 운영 참고 사항
 
