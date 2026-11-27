@@ -3,8 +3,9 @@ set -euo pipefail
 
 # Pre-install cleanup for self-hosted Modalix runners. Keep this limited to
 # storage only; runtime services and installed package state may not exist yet.
-TARGET_COPROCESSING_DIR="/data/simaai/coprocessing"
-TMP_ROOT="${DEVKIT_STORAGE_TMP_ROOT:-/tmp}"
+STORAGE_ROOT="${DEVKIT_STORAGE_ROOT:-}"
+TARGET_COPROCESSING_DIR="${STORAGE_ROOT}/data/simaai/coprocessing"
+TMP_ROOT="${STORAGE_ROOT}/tmp"
 TMP_FREE_SPACE_THRESHOLD_MB="${TMP_FREE_SPACE_THRESHOLD_MB:-1024}"
 
 if [[ $# -gt 0 ]]; then
@@ -24,7 +25,7 @@ run_step() {
 }
 
 cleanup_coprocessing() {
-  if [[ "${TARGET_COPROCESSING_DIR}" != "/data/simaai/coprocessing" ]]; then
+  if [[ "${TARGET_COPROCESSING_DIR}" != "${STORAGE_ROOT}/data/simaai/coprocessing" ]]; then
     printf "[storage-cleanup] coprocessing cleanup skipped: unexpected target %s\n" "${TARGET_COPROCESSING_DIR}"
     return 1
   fi
@@ -90,7 +91,7 @@ cleanup_tmp_sima_if_tmp_low_space() {
 
 report_space() {
   local path free_mb
-  for path in / "${TMP_ROOT}"; do
+  for path in "${STORAGE_ROOT:-/}" "${TMP_ROOT}"; do
     free_mb="$(free_space_mb "$path")"
     if [[ "$free_mb" =~ ^[0-9]+$ ]]; then
       printf "[storage-cleanup] %s free space: %sMB\n" "$path" "$free_mb"

@@ -49,8 +49,12 @@ class CleanupDevkitStorageTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         base = Path(self._tmp.name)
-        self.tmp_root = base / "tmp"
-        self.tmp_root.mkdir()
+        self.storage_root = base / "root"
+        self.tmp_root = self.storage_root / "tmp"
+        self.tmp_root.mkdir(parents=True)
+        self.coprocessing = self.storage_root / "data" / "simaai" / "coprocessing"
+        (self.coprocessing / "job").mkdir(parents=True)
+        (self.coprocessing / "buffer.bin").write_text("x")
         bin_dir = base / "bin"
         bin_dir.mkdir()
         sudo = bin_dir / "sudo"
@@ -69,7 +73,7 @@ class CleanupDevkitStorageTest(unittest.TestCase):
         env = dict(
             os.environ,
             PATH=self.path,
-            DEVKIT_STORAGE_TMP_ROOT=str(self.tmp_root),
+            DEVKIT_STORAGE_ROOT=str(self.storage_root),
             TMP_FREE_SPACE_THRESHOLD_MB=str(threshold_mb),
         )
         result = subprocess.run(
@@ -97,10 +101,16 @@ class CleanupDevkitStorageTest(unittest.TestCase):
         self.assertIn("sima-yolov8s-cache", self.top_level())
         self.assertIn(f"{self.tmp_root} free space is", result.stdout)
 
+    def test_empties_coprocessing_directory(self) -> None:
+        self.run_cleanup(threshold_mb=1)
+
+        self.assertTrue(self.coprocessing.is_dir())
+        self.assertEqual(list(self.coprocessing.iterdir()), [])
+
     def test_reports_free_space_on_root_and_tmp(self) -> None:
         result = self.run_cleanup(threshold_mb=1)
 
-        self.assertIn("[storage-cleanup] / free space:", result.stdout)
+        self.assertIn(f"[storage-cleanup] {self.storage_root} free space:", result.stdout)
         self.assertIn(f"[storage-cleanup] {self.tmp_root} free space:", result.stdout)
 
 
