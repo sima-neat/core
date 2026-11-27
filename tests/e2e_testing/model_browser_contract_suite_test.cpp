@@ -1,6 +1,6 @@
 // Contract checks for single-component Model Browser packages. Each CTest runs one entry of the
 // table below on a real DevKit: the declared outputs, finite values, sync and async agreement,
-// output lifetime across runs and, where the model has a known answer, that answer.
+// output lifetime across runs and one application-level known answer per model.
 // CI prepares the packages into SIMA_MODEL_BROWSER_DIR (tools/ci/partition_devkit_e2e.py).
 #include "asset_utils.h"
 #include "cli_utils.h"
@@ -36,52 +36,6 @@ using simaai::neat::TensorList;
 
 namespace {
 
-struct Contract {
-  // Element count of every output, from the model README. Order-independent: the package
-  // decides the output order and the check compares sorted counts.
-  std::vector<std::int64_t> output_elements;
-  std::function<void(Model::Options&)> configure;
-  // Installed test images relative to the shared asset root; the first is the reference input.
-  std::vector<std::string> images;
-  int expected_top1 = -1; // Classifiers only: ImageNet class of images[0].
-};
-
-void rgb_image_input(Model::Options& opt, simaai::neat::PreprocessColorFormat format) {
-  opt.preprocess.kind = simaai::neat::InputKind::Image;
-  opt.preprocess.enable = AutoFlag::On;
-  opt.preprocess.color_convert.enable = AutoFlag::On;
-  opt.preprocess.color_convert.input_format = format;
-}
-
-const std::map<std::string, Contract>& contracts() {
-  static const std::map<std::string, Contract> table = {
-      // README: 299x299 RGB normalized to -1..1, one `logits` output with 1000 classes.
-      {"inception_v3",
-       {{1000},
-        [](Model::Options& opt) {
-          rgb_image_input(opt, simaai::neat::PreprocessColorFormat::BGR);
-          opt.preprocess.normalize.enable = AutoFlag::On;
-          opt.preprocess.normalize.mean = {0.5f, 0.5f, 0.5f};
-          opt.preprocess.normalize.stddev = {0.5f, 0.5f, 0.5f};
-          opt.preprocess.normalize.has_explicit_stats = true;
-        },
-        {"pcie_host/tutorials/assets/labrador.jpg", "tests/images/people.jpg"},
-        208}},
-      // README: 640x640 BGR 0..255 without normalization; bbox (4), objectness (1) and class
-      // logits (80) on 80x80, 40x40 and 20x20 grids.
-      {"yolox_s",
-       {{80 * 80 * 4, 40 * 40 * 4, 20 * 20 * 4, 80 * 80, 40 * 40, 20 * 20, 80 * 80 * 80,
-         40 * 40 * 80, 20 * 20 * 80},
-        [](Model::Options& opt) {
-          rgb_image_input(opt, simaai::neat::PreprocessColorFormat::BGR);
-          opt.preprocess.normalize.enable = AutoFlag::Off;
-        },
-        {"tests/images/people.jpg", "pcie_host/tutorials/assets/labrador.jpg"},
-        -1}},
-  };
-  return table;
-}
-
 int failures = 0;
 
 void check(bool ok, const std::string& name, const std::string& detail = {}) {
@@ -112,12 +66,10 @@ std::int64_t element_count(const std::vector<std::int64_t>& shape) {
   return n;
 }
 
+// Exactly the tensor's elements. map() may also expose trailing bytes of the backing buffer,
+// which for a multi-output model hold other data.
 std::vector<std::uint8_t> bytes_of(const Tensor& tensor) {
-  simaai::neat::Mapping map = tensor.map(simaai::neat::MapMode::Read);
-  if (!map.data || map.size_bytes == 0)
-    return {};
-  const auto* p = static_cast<const std::uint8_t*>(map.data);
-  return std::vector<std::uint8_t>(p, p + map.size_bytes);
+  return tensor.copy_dense_bytes_tight();
 }
 
 float bf16_to_fp32(std::uint16_t value) {
@@ -157,6 +109,17 @@ std::vector<std::vector<std::uint8_t>> all_bytes(const TensorList& outputs) {
   return out;
 }
 
+struct Contract {
+  // Element count of every output, from the model README. Order-independent: the package
+  // decides the output order and the check compares sorted counts.
+  std::vector<std::int64_t> output_elements;
+  std::function<void(Model::Options&)> configure;
+  // Installed test images relative to the shared asset root; the first is the reference input.
+  std::vector<std::string> images;
+  // Application-level answer on images[0], checked on the first sync run.
+  std::function<void(const TensorList&, const std::string&)> known_answer;
+};
+
 void check_outputs(const TensorList& outputs, const Contract& contract, const std::string& run) {
   check(outputs.size() == contract.output_elements.size(), run + " output count",
         std::to_string(outputs.size()) + " outputs, expected " +
@@ -187,6 +150,101 @@ int top1(const Tensor& logits) {
   if (values.empty())
     return -1;
   return static_cast<int>(std::max_element(values.begin(), values.end()) - values.begin());
+}
+
+void check_top1(const TensorList& outputs, const std::string& image, int expected) {
+  const int got = outputs.empty() ? -1 : top1(outputs.front());
+  check(got == expected, "top-1 class on " + image,
+        std::to_string(got) + ", expected " + std::to_string(expected));
+}
+
+// The one output whose last three dimensions are {h, w, c}; null if none or several match.
+const Tensor* output_with_hwc(const TensorList& outputs, std::int64_t h, std::int64_t w,
+                              std::int64_t c) {
+  const Tensor* found = nullptr;
+  for (const Tensor& t : outputs) {
+    const std::vector<std::int64_t>& s = t.shape;
+    if (s.size() < 3 || s[s.size() - 3] != h || s[s.size() - 2] != w || s.back() != c)
+      continue;
+    if (found)
+      return nullptr;
+    found = &t;
+  }
+  return found;
+}
+
+// YOLOX raw heads are NHWC logits. On the 40x40 head every cell with the strongest objectness
+// must score class 0 (person) highest; ties are possible because the logits are quantized. The
+// 80x80 head is not used: its class tensor is 80x80x80, so the shape cannot show the layout.
+void check_strongest_cell_is_person(const TensorList& outputs, const std::string& image) {
+  constexpr std::int64_t grid = 40;
+  constexpr std::size_t cells = grid * grid;
+  constexpr std::size_t classes = 80;
+  const std::string name = "strongest 40x40 objectness cell on " + image + " is class 0";
+  const Tensor* objectness = output_with_hwc(outputs, grid, grid, 1);
+  const Tensor* class_logits = output_with_hwc(outputs, grid, grid, classes);
+  if (!objectness || !class_logits) {
+    check(false, name, "no single [..,40,40,1] objectness and [..,40,40,80] class output");
+    return;
+  }
+  const std::vector<double> obj = float_values(*objectness);
+  const std::vector<double> cls = float_values(*class_logits);
+  if (obj.size() != cells || cls.size() != cells * classes) {
+    check(false, name, "objectness or class output is not float");
+    return;
+  }
+  const double best = *std::max_element(obj.begin(), obj.end());
+  std::ostringstream detail;
+  std::size_t strongest = 0;
+  bool all_person = true;
+  for (std::size_t cell = 0; cell < cells; ++cell) {
+    if (obj[cell] != best)
+      continue;
+    const auto row = cls.begin() + static_cast<std::ptrdiff_t>(cell * classes);
+    const auto top = std::max_element(row, row + classes) - row;
+    ++strongest;
+    all_person = all_person && top == 0;
+    detail << "cell (" << cell / grid << "," << cell % grid << ") objectness " << best << " class "
+           << top << "; ";
+  }
+  check(strongest > 0 && all_person, name, detail.str());
+}
+
+void rgb_image_input(Model::Options& opt, simaai::neat::PreprocessColorFormat format) {
+  opt.preprocess.kind = simaai::neat::InputKind::Image;
+  opt.preprocess.enable = AutoFlag::On;
+  opt.preprocess.color_convert.enable = AutoFlag::On;
+  opt.preprocess.color_convert.input_format = format;
+}
+
+const std::map<std::string, Contract>& contracts() {
+  static const std::map<std::string, Contract> table = {
+      // README: 299x299 RGB normalized to -1..1, one `logits` output with 1000 classes.
+      {"inception_v3",
+       {{1000},
+        [](Model::Options& opt) {
+          rgb_image_input(opt, simaai::neat::PreprocessColorFormat::BGR);
+          opt.preprocess.normalize.enable = AutoFlag::On;
+          opt.preprocess.normalize.mean = {0.5f, 0.5f, 0.5f};
+          opt.preprocess.normalize.stddev = {0.5f, 0.5f, 0.5f};
+          opt.preprocess.normalize.has_explicit_stats = true;
+        },
+        {"pcie_host/tutorials/assets/labrador.jpg", "tests/images/people.jpg"},
+        [](const TensorList& out, const std::string& image) { check_top1(out, image, 208); }}},
+      // README: 640x640 BGR 0..255 without normalization. The package ends at the raw heads:
+      // bbox (4), objectness logit (1) and class logits (80) per cell of the 80x80, 40x40 and
+      // 20x20 grids, NHWC float.
+      {"yolox_s",
+       {{80 * 80 * 4, 40 * 40 * 4, 20 * 20 * 4, 80 * 80, 40 * 40, 20 * 20, 80 * 80 * 80,
+         40 * 40 * 80, 20 * 20 * 80},
+        [](Model::Options& opt) {
+          rgb_image_input(opt, simaai::neat::PreprocessColorFormat::BGR);
+          opt.preprocess.normalize.enable = AutoFlag::Off;
+        },
+        {"tests/images/people.jpg", "pcie_host/tutorials/assets/labrador.jpg"},
+        check_strongest_cell_is_person}},
+  };
+  return table;
 }
 
 } // namespace
@@ -252,11 +310,7 @@ int main(int argc, char** argv) {
     check_outputs(first, contract, "sync");
     const auto first_bytes = all_bytes(first);
 
-    if (contract.expected_top1 >= 0 && !first.empty()) {
-      const int got = top1(first.front());
-      check(got == contract.expected_top1, "top-1 class on " + contract.images[0],
-            std::to_string(got) + ", expected " + std::to_string(contract.expected_top1));
-    }
+    contract.known_answer(first, contract.images[0]);
 
     // Async: the same input through a built runner gives the same bytes as the sync run.
     {
