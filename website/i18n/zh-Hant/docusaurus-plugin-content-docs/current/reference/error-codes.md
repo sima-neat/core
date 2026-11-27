@@ -31,6 +31,7 @@ Neat 透過 `NeatError` 和 `PullError` 呈現類型錯誤。 每次錯誤都會
 | `misconfig.pipeline_shape` | `error_codes::kPipelineShape` | `pyneat.ERROR_PIPELINE_SHAPE` |
 | `misconfig.caps` | `error_codes::kCaps` | `pyneat.ERROR_CAPS` |
 | `misconfig.input_shape` | `error_codes::kInputShape` | `pyneat.ERROR_INPUT_SHAPE` |
+| `misconfig.sample_attributes` | `error_codes::kSampleAttributes` | `pyneat.ERROR_SAMPLE_ATTRIBUTES` |
 | `misconfig.runtime_abi_mismatch` | `error_codes::kRuntimeAbiMismatch` | `pyneat.ERROR_RUNTIME_ABI_MISMATCH` |
 | `misconfig.graph_element_name` | `error_codes::kGraphElementName` | `pyneat.ERROR_GRAPH_ELEMENT_NAME` |
 | `misconfig.media_caps` | `error_codes::kMediaCaps` | `pyneat.ERROR_MEDIA_CAPS` |
@@ -74,6 +75,7 @@ Neat 透過 `NeatError` 和 `PullError` 呈現類型錯誤。 每次錯誤都會
 | `misconfig.pipeline_shape` | 此圖的拓撲結構無效，或缺少輸入/輸出邊界。| 請更正圖的連接，以及必要的 `Input` 或 `Output` 節點。|
 | 在框架驗證期間，覆蓋大小寫或相鄰節點合約是不相容的。`misconfig.caps` | 請調整宣告的格式、尺寸、速率和相鄰節點合約。| |
 | `misconfig.input_shape` | 輸入的張量與預期的形狀或資料類型不符。| 請提供預期的輸入，或透過模型選項來設定模型預處理。|
+| `misconfig.sample_attributes` | 樣本屬性的鍵或值含有 NUL 位元組或無效的 UTF-8 編碼。 | 鍵和值都必須使用有效的 UTF-8 編碼，且不得含有 NUL 位元組。 |
 | `misconfig.runtime_abi_mismatch` | Neat 和已安裝的執行階段外掛程式使用不相容的 ABI。| 請安裝相符的 Neat Library 和執行階段外掛程式版本。|
 | `misconfig.graph_element_name` | 自訂片段包含一個無法指定穩定節點名稱的元素。| 請為自訂元素指定穩定且獨一無二的名稱。|
 | `misconfig.media_caps` | 已連接的 GStreamer 階段需要不相容的媒體參數。| 請調整這些階段，或插入所需的轉換、縮放或幀率轉換節點。|

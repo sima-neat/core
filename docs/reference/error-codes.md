@@ -36,6 +36,7 @@ The same values are available in both language APIs:
 | `misconfig.pipeline_shape` | `error_codes::kPipelineShape` | `pyneat.ERROR_PIPELINE_SHAPE` |
 | `misconfig.caps` | `error_codes::kCaps` | `pyneat.ERROR_CAPS` |
 | `misconfig.input_shape` | `error_codes::kInputShape` | `pyneat.ERROR_INPUT_SHAPE` |
+| `misconfig.sample_attributes` | `error_codes::kSampleAttributes` | `pyneat.ERROR_SAMPLE_ATTRIBUTES` |
 | `misconfig.runtime_abi_mismatch` | `error_codes::kRuntimeAbiMismatch` | `pyneat.ERROR_RUNTIME_ABI_MISMATCH` |
 | `misconfig.graph_element_name` | `error_codes::kGraphElementName` | `pyneat.ERROR_GRAPH_ELEMENT_NAME` |
 | `misconfig.media_caps` | `error_codes::kMediaCaps` | `pyneat.ERROR_MEDIA_CAPS` |
@@ -79,6 +80,7 @@ The same values are available in both language APIs:
 | `misconfig.pipeline_shape` | The graph has an invalid topology or missing input/output boundary. | Correct the graph connections and required `Input` or `Output` Nodes. |
 | `misconfig.caps` | A caps override or adjacent Node contract is incompatible during framework validation. | Align the declared format, dimensions, rate, and adjacent Node contract. |
 | `misconfig.input_shape` | An input tensor does not match the expected shape or data type. | Provide the expected input, or configure model preprocessing through model options. |
+| `misconfig.sample_attributes` | A sample attribute key or value contains a NUL byte or invalid UTF-8. | Use valid UTF-8 without NUL bytes for both keys and values. |
 | `misconfig.runtime_abi_mismatch` | Neat and an installed runtime plugin use incompatible ABIs. | Install matching Neat Library and runtime-plugin builds. |
 | `misconfig.graph_element_name` | A custom fragment contains an element that cannot be assigned a stable Node name. | Give custom elements stable, unique names. |
 | `misconfig.media_caps` | Connected GStreamer stages require incompatible media caps. | Align the stages or insert the required conversion, scaling, or rate-conversion Node. |

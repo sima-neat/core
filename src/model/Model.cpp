@@ -3534,6 +3534,7 @@ public:
   Sample seed_samples(const Sample& inputs, const char* where) const override {
     if (inputs.size() == 1U &&
         sample_represents_atomic_tensor_set_ingress_item(inputs.front(), ingress_contracts_)) {
+      validate_sample_attributes(inputs.front(), where);
       Sample seed = seed_tensors(inputs.front().tensors, where);
       propagate_atomic_sample_identity(inputs.front(), &seed);
       return seed;
@@ -3573,6 +3574,7 @@ public:
   Sample process_samples(const Sample& inputs, const char* where) const override {
     if (inputs.size() == 1U &&
         sample_represents_atomic_tensor_set_ingress_item(inputs.front(), ingress_contracts_)) {
+      validate_sample_attributes(inputs.front(), where);
       Sample processed = process_tensors(inputs.front().tensors, where);
       propagate_atomic_sample_identity(inputs.front(), &processed);
       return processed;

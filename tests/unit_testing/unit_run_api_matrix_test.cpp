@@ -421,7 +421,28 @@ RUN_TEST(
         copy_msg.tensor = seed;
         copy_msg.payload_type = PayloadType::Image;
         copy_msg.format = "RGB";
-        copy_msg.attributes = {{"image-channel", "color"}, {"image-index", "41"}};
+        copy_msg.attributes = {{"caméra", "entrée"}, {"image-index", "41"}, {"empty", ""}};
+        struct InvalidAttribute {
+          std::string key;
+          std::string value;
+          const char* diagnostic;
+        };
+        const InvalidAttribute invalid_attributes[] = {
+            {std::string("bad\0key", 7), "v",
+             R"(sample attribute key "bad\u0000key" contains a NUL byte)"},
+            {"label", std::string("a\0b", 3),
+             R"(sample attribute value for key "label" contains a NUL byte)"},
+            {"bad\xffkey", "v", "sample attribute key \"bad\uFFFDkey\" is not valid UTF-8"},
+            {"label", "\xff", R"(sample attribute value for key "label" is not valid UTF-8)"},
+        };
+        for (const auto& [key, value, diagnostic] : invalid_attributes) {
+          Sample invalid = copy_msg;
+          invalid.attributes[key] = value;
+          require_neat_error([&] { run.push(Sample{invalid}); }, error_codes::kSampleAttributes,
+                             diagnostic);
+          require_neat_error([&] { run.try_push(Sample{invalid}); }, error_codes::kSampleAttributes,
+                             diagnostic);
+        }
         try {
           require(run.try_push(Sample{copy_msg}),
                   run_api_case("active_try_push_sample_copy",

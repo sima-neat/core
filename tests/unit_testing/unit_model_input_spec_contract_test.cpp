@@ -1,9 +1,11 @@
 #include "model/Model.h"
+#include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "model/internal/ModelInternal.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/InputRouteProcessor.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
+#include "pipeline/runtime/RunCore.h"
 #include "nodes/common/Output.h"
 #include "model_archive_fixture_utils.h"
 #include "support/yolov8_variant_fixture.h"
@@ -483,6 +485,34 @@ sima_test::ModelArchiveFixture make_evo_style_multi_ingress_fixture(const std::s
                                                     });
 }
 
+void check_atomic_sample_attributes(const Model& model,
+                                    const pipeline_internal::InputRouteProcessorPtr& route) {
+  Sample input;
+  input.kind = SampleKind::TensorSet;
+  for (const auto& spec : model.input_specs()) {
+    auto tensor = Tensor::from_vector(std::vector<float>(16), spec.shape, TensorMemory::CPU);
+    tensor.layout = TensorLayout::HWC;
+    input.tensors.push_back(std::move(tensor));
+  }
+  input.attributes[std::string("bad\0key", 7)] = "value";
+
+  auto core = runtime::RunCore::create_graph_compat();
+  core->graph_execution_.reset();
+  core->pipeline.supports_push = true;
+  core->pipeline.input_route_processor = route;
+  require_neat_error([&] { route->seed_samples(input, "Model::build"); },
+                     error_codes::kSampleAttributes);
+  for (const bool block : {true, false}) {
+    require_neat_error([&] { core->push_samples(input, block); }, error_codes::kSampleAttributes,
+                       R"(sample attribute key "bad\u0000key" contains a NUL byte)");
+  }
+  require(core->pipeline.in_queue.empty(), "invalid TensorSet must not enter the input queue");
+  input.attributes = {{"valid-key", "value"}};
+  require(core->push_samples(input, true) && core->pipeline.in_queue.size() == 1,
+          "corrected TensorSet must enter the input queue");
+  core->close();
+}
+
 void check_multi_ingress_wire_projection() {
   for (const bool reverse_public_order : {false, true}) {
     const auto fixture = make_evo_style_multi_ingress_fixture(
@@ -513,6 +543,7 @@ void check_multi_ingress_wire_projection() {
         model, {.include_input = true, .include_output = true}, &hints);
     require(hints.bundled_fan_in && hints.input_route_processor,
             "multi-input wire test requires the real bundled Model route");
+    check_atomic_sample_attributes(model, hints.input_route_processor);
     const auto nodes = internal::ModelAccess::build_public_preprocess_nodes(model);
     require(!nodes.empty() &&
                 hints.input_route_processor->model_input_shape(nodes.front()) == wire_shape,

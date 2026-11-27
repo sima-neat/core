@@ -31,6 +31,7 @@ Neat повідомляє про типізовані збої через `NeatE
 | `misconfig.pipeline_shape` | `error_codes::kPipelineShape` | `pyneat.ERROR_PIPELINE_SHAPE` |
 | `misconfig.caps` | `error_codes::kCaps` | `pyneat.ERROR_CAPS` |
 | `misconfig.input_shape` | `error_codes::kInputShape` | `pyneat.ERROR_INPUT_SHAPE` |
+| `misconfig.sample_attributes` | `error_codes::kSampleAttributes` | `pyneat.ERROR_SAMPLE_ATTRIBUTES` |
 | `misconfig.runtime_abi_mismatch` | `error_codes::kRuntimeAbiMismatch` | `pyneat.ERROR_RUNTIME_ABI_MISMATCH` |
 | `misconfig.graph_element_name` | `error_codes::kGraphElementName` | `pyneat.ERROR_GRAPH_ELEMENT_NAME` |
 | `misconfig.media_caps` | `error_codes::kMediaCaps` | `pyneat.ERROR_MEDIA_CAPS` |
@@ -74,6 +75,7 @@ Neat повідомляє про типізовані збої через `NeatE
 | `misconfig.pipeline_shape` | Граф має недійсну топологію або в ньому бракує межі входу чи виходу. | Виправте з’єднання графа й додайте потрібні вузли `Input` або `Output`, якщо їх бракує. |
 | `misconfig.caps` | Під час перевірки фреймворком перевизначення caps або контракт суміжного вузла виявляються несумісними. | Узгодьте оголошений формат, розміри, частоту й контракт суміжного вузла. |
 | `misconfig.input_shape` | Вхідний тензор не відповідає очікуваній формі або типу даних. | Надайте очікувані вхідні дані або налаштуйте попередню обробку моделі через параметри моделі. |
+| `misconfig.sample_attributes` | Ключ або значення атрибута зразка містить байт NUL або некоректну послідовність UTF-8. | Для ключів і значень використовуйте коректний текст UTF-8 без байтів NUL. |
 | `misconfig.runtime_abi_mismatch` | Neat і встановлений плагін середовища виконання використовують несумісні ABI. | Встановіть сумісні між собою збірки Neat Library і плагіна середовища виконання. |
 | `misconfig.graph_element_name` | Власний фрагмент містить елемент, якому неможливо призначити стабільне ім’я вузла. | Дайте власним елементам стабільні унікальні імена. |
 | `misconfig.media_caps` | З’єднані етапи GStreamer потребують несумісних caps медіаданих. | Узгодьте етапи або вставте потрібний вузол перетворення, масштабування чи перетворення частоти. |

@@ -16,9 +16,11 @@
 #include "pipeline/internal/SampleTimingGstUtil.h"
 #include <simaai/scheduler/client/dma_memory.h>
 
+#include <glib.h>
 #include <gst/allocators/gstdmabuf.h>
 #include <gst/gst.h>
 
+#include <nlohmann/json.hpp>
 #include <opencv2/core/mat.hpp>
 
 #include <algorithm>
@@ -2143,6 +2145,24 @@ void validate_public_metadata(Describe describe, const InputOptions& opt,
 }
 } // namespace
 
+void validate_sample_attributes(const Sample& sample, const char* where) {
+  for (const auto& [key, value] : sample.attributes) {
+    const auto validate = [&](const std::string& text, const char* field) {
+      if (g_utf8_validate(text.data(), static_cast<gssize>(text.size()), nullptr))
+        return;
+      const auto name =
+          nlohmann::json(key).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+      const char* reason =
+          text.find('\0') != std::string::npos ? " contains a NUL byte" : " is not valid UTF-8";
+      pipeline_internal::error_util::throw_session_error(
+          error_codes::kSampleAttributes,
+          std::string(where) + ": sample attribute " + field + " " + name + reason);
+    };
+    validate(key, "key");
+    validate(value, "value for key");
+  }
+}
+
 void validate_public_input(const cv::Mat& input, const InputOptions& opt,
                            const InputStreamOptions& stream, const char* where) {
   validate_public_metadata([&] { return describe_mat_geometry_or_throw(input, opt, where); }, opt,
@@ -2188,6 +2208,7 @@ void validate_public_input(const Sample& input, const InputOptions& opt,
     validate_public_input(tensor, opt, stream, where);
   };
   const auto visit = [&](auto&& self, const Sample& sample) -> void {
+    validate_sample_attributes(sample, where);
     if (sample_has_tensor_list(sample) && !sample.tensors.empty()) {
       for (const auto& tensor : sample.tensors) {
         validate_tensor(tensor, sample);

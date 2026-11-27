@@ -31,6 +31,7 @@ Neatは、`NeatError`と`PullError`を通じて、型エラーなどの問題を
 | `misconfig.pipeline_shape` | `error_codes::kPipelineShape` | `pyneat.ERROR_PIPELINE_SHAPE` |
 | `misconfig.caps` | `error_codes::kCaps` | `pyneat.ERROR_CAPS` |
 | `misconfig.input_shape` | `error_codes::kInputShape` | `pyneat.ERROR_INPUT_SHAPE` |
+| `misconfig.sample_attributes` | `error_codes::kSampleAttributes` | `pyneat.ERROR_SAMPLE_ATTRIBUTES` |
 | `misconfig.runtime_abi_mismatch` | `error_codes::kRuntimeAbiMismatch` | `pyneat.ERROR_RUNTIME_ABI_MISMATCH` |
 | `misconfig.graph_element_name` | `error_codes::kGraphElementName` | `pyneat.ERROR_GRAPH_ELEMENT_NAME` |
 | `misconfig.media_caps` | `error_codes::kMediaCaps` | `pyneat.ERROR_MEDIA_CAPS` |
@@ -74,6 +75,7 @@ Neatは、`NeatError`と`PullError`を通じて、型エラーなどの問題を
 | `misconfig.pipeline_shape` | グラフのトポロジーが無効であるか、入力/出力境界がありません。| グラフの接続を修正し、必要な`Input`または`Output`ノードを追加してください。|
 | `misconfig.caps` | フレームワークの検証中に、キャプチャオーバーライドまたは隣接するノードとの契約が競合しています。| 宣言されたフォーマット、寸法、レート、および隣接するノードとの契約を調整してください。|
 | `misconfig.input_shape` | 入力テンソルが、想定される形状またはデータ型と一致しません。| 想定される入力を提供するか、モデルオプションを通じてモデルの前処理を設定してください。|
+| `misconfig.sample_attributes` | サンプル属性のキーまたは値に NUL バイトまたは不正な UTF-8 が含まれています。 | キーと値には NUL バイトを含まない有効な UTF-8 を使用してください。 |
 | `misconfig.runtime_abi_mismatch` | Neatとインストールされたランタイムプラグインが互換性のないABIを使用しています。| 互換性のあるNeat Libraryとランタイムプラグインのビルドをインストールしてください。|
 | `misconfig.graph_element_name` | カスタムフラグメントに、安定したノード名を割り当てることができない要素が含まれています。| カスタム要素には、安定した一意の名前を付けてください。|
 | `misconfig.media_caps` | 接続されている GStreamer ステージは、互換性のないメディア機能を持っています。| ステージを調整するか、必要な変換、スケーリング、またはレート変換ノードを挿入してください。|

@@ -5711,6 +5711,7 @@ NB_MODULE(_pyneat_core, m) {
   m.attr("ERROR_PIPELINE_SHAPE") = simaai::neat::error_codes::kPipelineShape;
   m.attr("ERROR_CAPS") = simaai::neat::error_codes::kCaps;
   m.attr("ERROR_INPUT_SHAPE") = simaai::neat::error_codes::kInputShape;
+  m.attr("ERROR_SAMPLE_ATTRIBUTES") = simaai::neat::error_codes::kSampleAttributes;
   m.attr("ERROR_RUNTIME_ABI_MISMATCH") = simaai::neat::error_codes::kRuntimeAbiMismatch;
   m.attr("ERROR_GRAPH_ELEMENT_NAME") = simaai::neat::error_codes::kGraphElementName;
   m.attr("ERROR_MEDIA_CAPS") = simaai::neat::error_codes::kMediaCaps;

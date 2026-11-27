@@ -200,6 +200,7 @@ InputGeometry describe_tensor_geometry_or_throw(const Tensor&, const InputOption
 InputGeometry describe_mat_geometry_or_throw(const cv::Mat&, const InputOptions&, const char*);
 SampleSpec derive_mat_spec_or_throw(const cv::Mat&, const InputOptions&);
 // Caller rejection is synchronous and never mutates Run terminal/error state.
+void validate_sample_attributes(const Sample&, const char* where);
 void validate_public_input(const cv::Mat&, const InputOptions&, const InputStreamOptions&,
                            const char*);
 void validate_public_input(const Tensor&, const InputOptions&, const InputStreamOptions&,

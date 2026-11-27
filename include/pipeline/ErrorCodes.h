@@ -30,6 +30,8 @@ inline constexpr const char* kPipelineShape = "misconfig.pipeline_shape";
 inline constexpr const char* kCaps = "misconfig.caps";
 /// Input tensor violates the expected contract (rank, shape, layout, or data type).
 inline constexpr const char* kInputShape = "misconfig.input_shape";
+/// A Sample attribute cannot be represented in transport metadata.
+inline constexpr const char* kSampleAttributes = "misconfig.sample_attributes";
 /// Framework/runtime plugin ABI mismatch, usually from mixed PyNEAT and runtime artifacts.
 inline constexpr const char* kRuntimeAbiMismatch = "misconfig.runtime_abi_mismatch";
 /// A custom graph fragment contains an element that cannot be attributed to a stable Node name.

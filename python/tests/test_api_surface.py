@@ -1572,6 +1572,7 @@ def test_error_code_constants_present():
     "ERROR_PIPELINE_SHAPE": "misconfig.pipeline_shape",
     "ERROR_CAPS": "misconfig.caps",
     "ERROR_INPUT_SHAPE": "misconfig.input_shape",
+    "ERROR_SAMPLE_ATTRIBUTES": "misconfig.sample_attributes",
     "ERROR_RUNTIME_ABI_MISMATCH": "misconfig.runtime_abi_mismatch",
     "ERROR_GRAPH_ELEMENT_NAME": "misconfig.graph_element_name",
     "ERROR_MEDIA_CAPS": "misconfig.media_caps",
