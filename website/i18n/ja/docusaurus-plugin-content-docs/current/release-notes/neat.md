@@ -7,6 +7,12 @@ sidebar_position: 3
 
 SiMa.ai Neat Library のリリースノート。
 
+## 0.6.3（未リリース） {#v063}
+
+### 修正 {#v063-fixes}
+
+- RTSP の H.264 入力は、既定で IDR の前に毎回 SPS/PPS を繰り返すようになりました。`RtspEncodedInputOptions`、`RtspDecodedInputOptions`、`H264Depacketize` の既定値 `h264_parse_config_interval = -1` は、これまで `h264parse` を要素自体の既定値のままにしており、その既定値では SPS/PPS は繰り返されませんでした。ストリームの最初のアクセスユニットを受け取れなかったコンシューマー（起動時の融合グラフのエンコード済みエグレスなど）は、実行の残りの間ずっと映像を受け取れない状態になる代わりに、次の IDR から再開します。繰り返しを無効にするには `h264_parse_config_interval = 0` を設定します。`-1` 未満の値は拒否されます。
+
 ## 0.6.2 {#v062}
 
 ### 互換性に影響する変更 {#v062-breaking}

@@ -40,8 +40,8 @@ struct RtspDecodedInputOptions {
   /// default, `0` disables payload filtering, `> 0` selects an exact RTP
   /// payload.
   int payload_type = -1;
-  int h264_parse_config_interval =
-      -1;                   ///< SPS/PPS reinjection interval for the H.264 parser (-1 = default).
+  int h264_parse_config_interval = -1; ///< H.264 parser SPS/PPS repeat: -1 = before every IDR
+                                       ///< (default), 0 = off, N > 0 = every N s.
   int h264_fps = -1;        ///< Expected FPS injected into the parser caps (-1 = unspecified).
   int h264_width = -1;      ///< Expected width injected into the parser caps (-1 = unspecified).
   int h264_height = -1;     ///< Expected height injected into the parser caps (-1 = unspecified).

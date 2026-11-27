@@ -29,9 +29,16 @@ std::string H264Depacketize::backend_fragment(int node_index) const {
   ss << "\" " << "! rtph264depay name=" << dep << " wait-for-keyframe=true "
      << "! identity name=" << hseg << " silent=true single-segment=true "
      << "! h264parse name=" << par << " disable-passthrough=true ";
-  if (h264_parse_config_interval_ >= 0) {
-    ss << "config-interval=" << h264_parse_config_interval_ << " ";
+  // Always written: -1 repeats SPS/PPS before every IDR, so a consumer that joins or loses the
+  // stream's first access unit (the leaky encoded-egress queue of a fused encoded branch) can
+  // still decode from the next IDR. Sources such as MP4 republished without re-encoding carry
+  // them in-band only once, ahead of the first access unit.
+  if (h264_parse_config_interval_ < -1) {
+    throw std::invalid_argument(
+        "H264Depacketize: h264_parse_config_interval must be -1 (every IDR), 0 (off) or a "
+        "positive interval in seconds");
   }
+  ss << "config-interval=" << h264_parse_config_interval_ << " ";
   ss << "! capsfilter name=" << hcc
      << " caps=\"video/x-h264,parsed=true,stream-format=(string)byte-stream,alignment=(string)au";
   if (enforce_h264_caps_) {

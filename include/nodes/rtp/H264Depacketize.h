@@ -54,7 +54,8 @@ public:
   int payload_type() const {
     return payload_type_;
   }
-  /// `h264parse` `config-interval` passthrough; `-1` leaves the element default.
+  /// `h264parse` `config-interval`: `-1` repeats SPS/PPS before every IDR (the default), `0`
+  /// turns repetition off, `N > 0` repeats every N seconds. Values below `-1` are rejected.
   int h264_parse_config_interval() const {
     return h264_parse_config_interval_;
   }

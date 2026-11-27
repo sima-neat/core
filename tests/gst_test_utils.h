@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <initializer_list>
 #include <string>
 #include <thread>
 
@@ -110,6 +111,16 @@ inline GstPadProbeReturn probe_cb(GstPad* /*pad*/, GstPadProbeInfo* info, gpoint
   }
 
   return GST_PAD_PROBE_OK;
+}
+
+// The first candidate GStreamer element this host provides, or "" if it has none of them.
+inline std::string first_available_element(std::initializer_list<const char*> candidates) {
+  for (const char* candidate : candidates) {
+    if (simaai::neat::element_exists(candidate)) {
+      return candidate;
+    }
+  }
+  return {};
 }
 
 inline bool wait_for_bus_eos_or_error(GstElement* pipeline, int timeout_ms, std::string& err) {
