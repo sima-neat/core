@@ -3,7 +3,8 @@
  * The MPK is the only source of model contracts. Unlike the retired fixture,
  * this test never loads archive plugin JSON or assembles ProcessCVU pipelines.
  * Numerical decoder oracles live in Kernels; this test checks public payload
- * alignment, repeated async delivery and nonempty image-driven pose output.
+ * alignment, repeated async delivery and nonempty image-driven pose output,
+ * and that YOLO26n pose w16a16 sustains its throughput with frames in flight.
  */
 #include "gst/GstInit.h"
 #include "model/Model.h"
@@ -25,6 +26,13 @@
 #include <filesystem>
 #include <iostream>
 #include <vector>
+
+namespace {
+// The Model Browser lists about 235 FPS for yolo26n_pose w16a16 on Modalix; 200 leaves margin.
+constexpr int kTimedOutputs = 500;
+constexpr int kInFlight = 4;
+constexpr double kMinFps = 200.0;
+} // namespace
 
 int main(int argc, char** argv) {
   try {
@@ -60,11 +68,11 @@ int main(int argc, char** argv) {
     // Separate in-flight DMA allocations avoid same-buffer ownership contention.
     gst_init_once();
     std::vector<TensorList> inputs;
-    for (int i = 0; i < 2; ++i)
+    for (int i = 0; i < kInFlight; ++i)
       inputs.push_back(
           TensorList{Tensor::from_cv_mat(image, ImageSpec::PixelFormat::BGR, TensorMemory::EV74)});
     RunOptions run_options;
-    run_options.queue_depth = 2;
+    run_options.queue_depth = kInFlight;
     auto run = graph.build(inputs.front(), run_options);
     const auto validate = [&](const TensorList& output) {
       const auto decoded = decode_pose(output, image.cols, image.rows, 100, true);
@@ -88,18 +96,24 @@ int main(int argc, char** argv) {
       require(visible, "people image must produce visible keypoints, not untouched zero output");
     };
     for (int i = 0; i < 8; ++i)
-      validate(run.run(inputs[i % 2], 30000));
+      validate(run.run(inputs[i % kInFlight], 30000));
+    // Keep kInFlight frames queued: one push after each pull, so the pipeline never drains.
     const auto start = std::chrono::steady_clock::now();
-    for (int i = 0; i < 20; ++i) {
-      require(run.push(inputs[0]) && run.push(inputs[1]), "async pose input was rejected");
+    int pushed = 0;
+    for (; pushed < kInFlight; ++pushed)
+      require(run.push(inputs[pushed % kInFlight]), "async pose input was rejected");
+    for (int pulled = 0; pulled < kTimedOutputs; ++pulled) {
       validate(run.pull_tensors(30000));
-      validate(run.pull_tensors(30000));
+      if (pushed < kTimedOutputs) {
+        require(run.push(inputs[pushed % kInFlight]), "async pose input was rejected");
+        ++pushed;
+      }
     }
     const double seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    const double fps = seconds > 0 ? 40.0 / seconds : 0;
-    std::cout << "YOLO26N_POSE outputs=40 fps=" << fps << '\n';
-    require(fps >= 1.0, "pose integration smoke must sustain at least 1 FPS");
+    const double fps = seconds > 0 ? kTimedOutputs / seconds : 0;
+    std::cout << "YOLO26N_POSE outputs=" << kTimedOutputs << " fps=" << fps << '\n';
+    require(fps >= kMinFps, "YOLO26n pose w16a16 must sustain at least 200 FPS");
     return 0;
   } catch (const SkipTest& error) {
     return skip_long_test(error.what());
