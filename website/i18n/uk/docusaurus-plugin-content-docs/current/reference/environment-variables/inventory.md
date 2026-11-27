@@ -177,6 +177,7 @@ sidebar_position: 2
 - `SIMA_DECODER_COMPARE_MAX_ABS`
 - `SIMA_DECODER_COMPARE_PSNR_MIN`
 - `SIMA_DECODER_MIN_FRAMES`
+- `SIMA_DETR_RESNET50_TAR`
 - `SIMA_DISPATCHER_AUTO_RECOVER` — застаріле налаштування лише для тестів; поточне середовище виконання його ігнорує.
 - `SIMA_DUMP_PIPELINE_ON_FAIL`
 - `SIMA_FILE_READ_TEST_ALARM_S`

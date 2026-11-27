@@ -177,6 +177,7 @@ This is the full environment-variable inventory detected from source, tests, tut
 - `SIMA_DECODER_COMPARE_MAX_ABS`
 - `SIMA_DECODER_COMPARE_PSNR_MIN`
 - `SIMA_DECODER_MIN_FRAMES`
+- `SIMA_DETR_RESNET50_TAR`
 - `SIMA_DISPATCHER_AUTO_RECOVER` — legacy test-only setting; ignored by the current runtime.
 - `SIMA_DUMP_PIPELINE_ON_FAIL`
 - `SIMA_FILE_READ_TEST_ALARM_S`
