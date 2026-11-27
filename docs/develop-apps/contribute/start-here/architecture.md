@@ -1916,6 +1916,7 @@ every plugin in the graph.
 
 The runtime drains bus messages into `DiagCtx`.
 On an error message (`GST_MESSAGE_ERROR`), it throws `NeatError` including a `GraphReport` and reproduction hints.
+A fatal flow result held on the source pad of a `queue` or `queue2` is reported the same way, as the error the queue would post at EOS, so a negotiation failure surfaces while the input is still open.
 
 ### DOT dumps
 

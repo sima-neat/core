@@ -641,6 +641,135 @@ void drain_bus(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag, const
   gst_object_unref(bus);
 }
 
+namespace {
+
+GQuark reported_failure_quark() {
+  static const GQuark quark = g_quark_from_static_string("simaai-neat-failure-reported");
+  return quark;
+}
+
+void mark_failure_reported(GstElement* pipeline) {
+  g_object_set_qdata(G_OBJECT(pipeline), reported_failure_quark(), GINT_TO_POINTER(1));
+}
+
+bool failure_reported(GstElement* pipeline) {
+  return g_object_get_qdata(G_OBJECT(pipeline), reported_failure_quark()) != nullptr;
+}
+
+bool claim_failure_report(GstElement* pipeline) {
+  return g_object_replace_qdata(G_OBJECT(pipeline), reported_failure_quark(), nullptr,
+                                GINT_TO_POINTER(1), nullptr, nullptr) != FALSE;
+}
+
+bool pipeline_target_at_least_paused(GstElement* pipeline) {
+  GST_OBJECT_LOCK(pipeline);
+  const GstState target = GST_STATE_TARGET(pipeline);
+  GST_OBJECT_UNLOCK(pipeline);
+  return target >= GST_STATE_PAUSED;
+}
+
+struct ParkedQueueFlow {
+  GstElement* queue = nullptr;
+  GstFlowReturn flow = GST_FLOW_OK;
+};
+
+bool is_queue_element(GstElement* element) {
+  GstElementFactory* factory = gst_element_get_factory(element); // borrowed
+  const gchar* factory_name =
+      factory ? gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory)) : nullptr;
+  return g_strcmp0(factory_name, "queue") == 0 || g_strcmp0(factory_name, "queue2") == 0;
+}
+
+// Fatal flow returns sort below GST_FLOW_EOS; FLUSHING, NOT_LINKED and EOS do not.
+bool queue_src_pad_parked(GstElement* queue, GstFlowReturn& flow) {
+  GstPad* pad = gst_element_get_static_pad(queue, "src");
+  if (!pad)
+    return false;
+
+  const GstFlowReturn last = gst_pad_get_last_flow_return(pad);
+  GST_OBJECT_LOCK(pad);
+  const bool flushing = GST_PAD_IS_FLUSHING(pad);
+  GST_OBJECT_UNLOCK(pad);
+  gst_object_unref(pad);
+
+  if (last >= GST_FLOW_EOS || flushing)
+    return false;
+  flow = last;
+  return true;
+}
+
+ParkedQueueFlow find_parked_fatal_queue_flow(GstElement* pipeline) {
+  ParkedQueueFlow result;
+  if (!pipeline || !GST_IS_BIN(pipeline))
+    return result;
+
+  GstIterator* iterator = gst_bin_iterate_recurse(GST_BIN(pipeline));
+  if (!iterator)
+    return result;
+
+  GValue item = G_VALUE_INIT;
+  bool done = false;
+  while (!done) {
+    switch (gst_iterator_next(iterator, &item)) {
+    case GST_ITERATOR_OK: {
+      GstElement* element = GST_ELEMENT(g_value_get_object(&item));
+      GstFlowReturn flow = GST_FLOW_OK;
+      if (element && is_queue_element(element) && queue_src_pad_parked(element, flow)) {
+        result.queue = GST_ELEMENT(gst_object_ref(element));
+        result.flow = flow;
+        done = true;
+      }
+      g_value_reset(&item);
+      break;
+    }
+    case GST_ITERATOR_RESYNC:
+    case GST_ITERATOR_ERROR:
+    case GST_ITERATOR_DONE:
+      done = true;
+      break;
+    }
+  }
+  g_value_unset(&item);
+  gst_iterator_free(iterator);
+  return result;
+}
+
+// Mirrors the error GstQueue posts at EOS for a fatal downstream flow, without posting it.
+GstMessage* make_queue_flow_error_message(GstElement* queue, GstFlowReturn flow) {
+  GError* error =
+      g_error_new_literal(GST_STREAM_ERROR, GST_STREAM_ERROR_FAILED, "Internal data stream error.");
+  const std::string debug = std::string("streaming stopped, reason ") + gst_flow_get_name(flow) +
+                            " (" + std::to_string(static_cast<int>(flow)) + ")";
+  GstStructure* details =
+      gst_structure_new("details", "flow-return", G_TYPE_INT, static_cast<gint>(flow), nullptr);
+  GstMessage* msg =
+      gst_message_new_error_with_details(GST_OBJECT(queue), error, debug.c_str(), details);
+  g_error_free(error);
+  return msg;
+}
+
+GstMessage* pop_error_for_parked_queue_flow(GstElement* pipeline, GstBus* bus) {
+  if (failure_reported(pipeline) || !pipeline_target_at_least_paused(pipeline))
+    return nullptr;
+
+  ParkedQueueFlow parked = find_parked_fatal_queue_flow(pipeline);
+  if (!parked.queue)
+    return nullptr;
+
+  // Elements post their ERROR before returning the flow the queue records, so a real error
+  // that raced in after the first pop takes precedence.
+  GstMessage* msg = gst_bus_pop_filtered(bus, GST_MESSAGE_ERROR);
+  if (msg) {
+    mark_failure_reported(pipeline);
+  } else if (claim_failure_report(pipeline)) {
+    msg = make_queue_flow_error_message(parked.queue, parked.flow);
+  }
+  gst_object_unref(parked.queue);
+  return msg;
+}
+
+} // namespace
+
 void throw_if_bus_error(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag,
                         const char* where) {
   if (!pipeline)
@@ -651,9 +780,15 @@ void throw_if_bus_error(GstElement* pipeline, const std::shared_ptr<DiagCtx>& di
     return;
 
   GstMessage* msg = gst_bus_pop_filtered(bus, GST_MESSAGE_ERROR);
-  if (!msg) {
-    gst_object_unref(bus);
-    return;
+  if (msg) {
+    // A parked queue flow is reported once per pipeline and never after a bus ERROR.
+    mark_failure_reported(pipeline);
+  } else {
+    msg = pop_error_for_parked_queue_flow(pipeline, bus);
+    if (!msg) {
+      gst_object_unref(bus);
+      return;
+    }
   }
 
   std::optional<NormalizedDiagnostic> primary;

@@ -85,6 +85,37 @@ def test_graph_named_endpoint_runtime_smoke():
         run.close()
 
 
+def test_graph_open_input_caps_error_surfaces_on_pull():
+    _require_phase3_runtime()
+
+    # A caps request the converter cannot satisfy must raise from pull() while the input is open.
+    graph = pyneat.Graph("open_input_caps_error")
+    graph.add(pyneat.nodes.input("in"))
+    graph.add(
+        pyneat.nodes.custom(
+            'videoconvert ! capsfilter caps="video/x-raw,format=RGB,interlace-mode=interleaved"'
+        )
+    )
+    graph.add(pyneat.nodes.output())
+
+    frame = pyneat.Tensor.from_numpy(
+        np.full((240, 320, 3), 0x40, dtype=np.uint8),
+        copy=True,
+        memory=pyneat.TensorMemory.CPU,
+        image_format=pyneat.PixelFormat.RGB,
+    )
+    run = graph.build([frame])
+    try:
+        assert run.push([frame])
+        with pytest.raises(pyneat.NeatError) as excinfo:
+            run.pull(timeout_ms=5000)
+        assert excinfo.value.error_code == "misconfig.media_caps"
+        assert run.last_error()
+        assert run.last_error() == str(excinfo.value)
+    finally:
+        run.close()
+
+
 def test_run_export_runtime_smoke(tmp_path):
     _require_phase3_runtime()
 

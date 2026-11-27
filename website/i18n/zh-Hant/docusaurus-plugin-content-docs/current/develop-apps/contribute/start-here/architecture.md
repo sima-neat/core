@@ -1409,6 +1409,7 @@ BoxDecode 提供兩個版本化的 A65 實際時間元件：
 
 執行階段會將匯流排訊息排入 `DiagCtx`。
 如果發生錯誤訊息（`GST_MESSAGE_ERROR`），它會拋出 `NeatError`，其中包含 `GraphReport` 和重現提示。
+`queue` 或 `queue2` 的來源 pad 上所保留的致命流程結果也會以相同方式回報，視為該佇列在 EOS 時會發出的錯誤，因此協商失敗會在輸入仍開啟時就浮現。
 
 ### DOT 轉儲
 
