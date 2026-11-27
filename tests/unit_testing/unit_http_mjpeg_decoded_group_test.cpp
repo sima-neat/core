@@ -14,8 +14,12 @@
 #include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "pipeline/GraphReport.h"
+#include "pipeline/graph/internal/GraphBuildInternal.h"
 
 #include "test_utils.h"
+
+#include <gst/app/gstappsink.h>
+#include <gst/app/gstappsrc.h>
 
 #include <functional>
 #include <iostream>
@@ -30,6 +34,57 @@
 namespace {
 
 using simaai::neat::Graph;
+
+void check_multipart_pts(bool do_timestamp, const std::vector<GstClockTime>& expected) {
+  using namespace simaai::neat;
+  const std::vector<std::shared_ptr<Node>> nodes{
+      nodes::HttpSource({.location = "http://127.0.0.1/", .do_timestamp = do_timestamp}),
+      nodes::MultipartJpegDemux({}), nodes::EncodedCapsFixup({"image/jpeg", 25})};
+
+  // appsrc reproduces two parts sharing exactly one HTTP-read timestamp.
+  const auto destroy_pipeline = [](GstElement* pipe) {
+    gst_element_set_state(pipe, GST_STATE_NULL);
+    gst_object_unref(pipe);
+  };
+  const std::unique_ptr<GstElement, decltype(destroy_pipeline)> pipeline(
+      gst_parse_launch("appsrc name=source format=time "
+                       "caps=\"multipart/x-mixed-replace,boundary=frame\" "
+                       "! multipartdemux ! identity name=n2_encoded_capsfix "
+                       "! appsink name=sink sync=false",
+                       nullptr),
+      destroy_pipeline);
+  require(pipeline != nullptr, "could not create multipart timestamp test pipeline");
+  using ElementPtr = std::unique_ptr<GstElement, decltype(&gst_object_unref)>;
+  const ElementPtr source(gst_bin_get_by_name(GST_BIN(pipeline.get()), "source"), gst_object_unref);
+  const ElementPtr sink(gst_bin_get_by_name(GST_BIN(pipeline.get()), "sink"), gst_object_unref);
+  require(source && sink, "could not find multipart timestamp test endpoints");
+  session_build_attach_encoded_caps_fixups(pipeline.get(), nodes, {});
+  require(gst_element_set_state(pipeline.get(), GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
+          "could not start multipart timestamp test pipeline");
+
+  const std::string part = "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: 1\r\n\r\nx\r\n";
+  for (const GstClockTime read_pts : {80 * GST_MSECOND, 100 * GST_MSECOND, 250 * GST_MSECOND}) {
+    const std::string bytes = part + part + (read_pts == 250 * GST_MSECOND ? "--frame--\r\n" : "");
+    GstBuffer* chunk = gst_buffer_new_allocate(nullptr, bytes.size(), nullptr);
+    gst_buffer_fill(chunk, 0, bytes.data(), bytes.size());
+    GST_BUFFER_PTS(chunk) = read_pts;
+    require(gst_app_src_push_buffer(GST_APP_SRC(source.get()), chunk) == GST_FLOW_OK,
+            "could not push multipart HTTP read");
+  }
+  require(gst_app_src_end_of_stream(GST_APP_SRC(source.get())) == GST_FLOW_OK,
+          "could not end multipart timestamp input");
+
+  for (size_t i = 0; i < expected.size(); ++i) {
+    const std::unique_ptr<GstSample, decltype(&gst_sample_unref)> sample(
+        gst_app_sink_try_pull_sample(GST_APP_SINK(sink.get()), GST_SECOND), gst_sample_unref);
+    require(sample != nullptr, "missing JPEG " + std::to_string(i));
+    require(GST_BUFFER_PTS(gst_sample_get_buffer(sample.get())) == expected[i],
+            "unexpected PTS for JPEG " + std::to_string(i));
+  }
+  require(gst_app_sink_try_pull_sample(GST_APP_SINK(sink.get()), GST_SECOND) == nullptr &&
+              gst_app_sink_is_eos(GST_APP_SINK(sink.get())),
+          "multipart timestamp repair should emit one buffer per JPEG");
+}
 
 static_assert(
     std::is_same_v<
@@ -128,6 +183,13 @@ void require_backend_shape(const Graph& graph, const std::string& label) {
 
 int main() {
   try {
+    gst_init(nullptr, nullptr);
+    // The second HTTP read arrives before the inferred PTS of the preceding JPEG.
+    check_multipart_pts(true, {80 * GST_MSECOND, 120 * GST_MSECOND, 160 * GST_MSECOND,
+                               200 * GST_MSECOND, 250 * GST_MSECOND, 290 * GST_MSECOND});
+    check_multipart_pts(false, {80 * GST_MSECOND, GST_CLOCK_TIME_NONE, 100 * GST_MSECOND,
+                                GST_CLOCK_TIME_NONE, 250 * GST_MSECOND, GST_CLOCK_TIME_NONE});
+
     simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions opt;
     opt.url = "http://example.local/mjpeg";
     opt.timeout_seconds = 9;
