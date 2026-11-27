@@ -200,6 +200,13 @@ bytes are the same either way.
 `SimaBEVPool` keeps no state between frames. It checks the plan's header and
 contents on every execution and rejects a plan that does not match its shapes.
 
+`Graph::build` also reads the header of the plan among its input tensors. If the header
+records a different format than `plan_format`, the build fails with
+`misconfig.pipeline_shape` and names both formats. Build the plan with the matching
+`SimaBEVPoolPlanOptions.format`, or set `plan_format` to the plan's format. A plan that
+arrives only after the build, or from an upstream `SimaBEVPoolPlan` stage, is checked
+only when the kernel runs.
+
 ## Target limits
 
 EV74 adds restrictions to the A65 contract:

@@ -175,6 +175,11 @@ Scatter 用來填滿空格子的 `zero_point`。畫布保留這些值，並將�
 `SimaBEVPool` 不會在影格之間保留狀態。它每次執行時都會檢查計畫的標頭與內容，並拒絕與自身
 形狀不符的計畫。
 
+`Graph::build` 也會讀取輸入張量中計畫的標頭。若標頭記錄的格式與 `plan_format` 不同，
+建置會以 `misconfig.pipeline_shape` 失敗，並指出兩種格式。請使用相符的
+`SimaBEVPoolPlanOptions.format` 建立計畫，或將 `plan_format` 設為計畫的格式。
+僅在建置之後才送達的計畫，或來自上游 `SimaBEVPoolPlan` 階段的計畫，只會在核心執行時才受到檢查。
+
 ## 目標限制
 
 EV74 在 A65 契約之外另有下列限制：

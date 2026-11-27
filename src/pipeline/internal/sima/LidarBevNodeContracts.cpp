@@ -6,6 +6,7 @@
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
 #include "pipeline/internal/contract/CompiledKernelTensor.h"
 #include "pipeline/internal/contract/ContractFacts.h"
+#include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/sima/KernelTensorLayout.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
@@ -13,6 +14,7 @@
 #include <simaai/scheduler/client/kernel.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -205,6 +207,48 @@ bool compile_bev_contract(const std::string& node_kind, const std::string& eleme
     error->clear();
   return true;
 }
+
+// bev_pool::plan_layout and plan_layout_v2 (the Kernels' published plan layouts) both
+// start with little-endian u32 words Magic = 0x4C505642 ("BVPL") and Version (1 or 2).
+constexpr std::uint32_t kBevPoolPlanMagic = 0x4C505642U;
+constexpr std::int64_t kBevPoolPlanPrefixBytes = 8; // Magic and Version words
+
+void refuse_mismatched_plan_format(const Sample& ingress_sample, SimaBEVPoolPlanFormat plan_format,
+                                   const std::string& node_kind) {
+  const auto tensors = tensors_from_sample(ingress_sample, true);
+  if (tensors.size() != 3)
+    return;
+  Tensor prefix = tensors[2];
+  if (prefix.shape.size() != 1 || prefix.shape[0] < kBevPoolPlanPrefixBytes)
+    return;
+  prefix.shape = {kBevPoolPlanPrefixBytes};
+  std::uint32_t version = 0;
+  {
+    const Mapping mapping = pipeline_internal::map_dense_tensor_read(prefix);
+    if (!mapping.data || mapping.size_bytes < static_cast<std::size_t>(kBevPoolPlanPrefixBytes))
+      return;
+    const auto* bytes = static_cast<const std::uint8_t*>(mapping.data);
+    const auto word = [bytes](std::size_t i) {
+      return static_cast<std::uint32_t>(bytes[4 * i]) |
+             (static_cast<std::uint32_t>(bytes[4 * i + 1]) << 8) |
+             (static_cast<std::uint32_t>(bytes[4 * i + 2]) << 16) |
+             (static_cast<std::uint32_t>(bytes[4 * i + 3]) << 24);
+    };
+    if (word(0) != kBevPoolPlanMagic)
+      return;
+    version = word(1);
+  }
+  if (version != 1 && version != 2)
+    return;
+  const auto expected = static_cast<std::uint32_t>(plan_format);
+  if (version == expected)
+    return;
+  throw std::invalid_argument(
+      node_kind + ": plan_format is V" + std::to_string(expected) +
+      " but the plan header records format V" + std::to_string(version) +
+      "; rebuild the plan with SimaBEVPoolPlanOptions.format = V" + std::to_string(expected) +
+      " or set SimaBEVPoolOptions.plan_format = V" + std::to_string(version));
+}
 } // namespace
 
 bool SimaVoxelize::compile_node_contract(const ContractCompileInput& input,
@@ -289,6 +333,10 @@ bool SimaBEVPool::compile_node_contract(const ContractCompileInput& input,
     const auto facts =
         bev_tensor_facts(upstream, ingress ? nullptr : input.immediate_upstream, kind());
     const auto plan = kr::bev_pool_request(opt_, facts);
+    // Only a plan in the caller's build sample has bytes to read here; a plan
+    // from a compiled upstream stage is checked by the kernel when it runs.
+    if (ingress)
+      refuse_mismatched_plan_format(*input.ingress.ingress_sample, opt_.plan_format, kind());
     return compile_bev_contract(kind(), element_names(input.node_index).front(),
                                 contract_definition(), upstream, ingress.has_value(), plan, out,
                                 error);
