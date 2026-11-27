@@ -13,10 +13,12 @@ contribution. Include staged and working changes for a local review and check
 
 ## Follow the behavior
 
-1. Identify what changes for callers and which inputs, defaults, and failure
-   paths are supported. Trace the changed code through installed C++ headers,
-   implementation, and PyNeat entry points where relevant. Check ownership and
-   buffer lifetime across push, pull, and teardown paths.
+1. Compare the PR's claimed behavior with the linked issue and any approved
+   design. Trace each claim through the affected code, including installed
+   C++ headers and PyNeat entry points where relevant. Identify the test or
+   check that verifies it. When the PR includes a flow sketch, check that it
+   matches the code path. Check supported inputs, defaults, failure paths,
+   and buffer ownership and lifetime across push, pull, and teardown.
 2. Check the [runtime contracts](../../../agents/runtime-contracts.md) when the
    change crosses Scheduler, LLiMa, GStreamer transport, or an MPK boundary.
    Trace geometry, layout, dtype, and strides to the consumer. For numerical
@@ -40,20 +42,25 @@ contribution. Include staged and working changes for a local review and check
   fallback paths. For each proposed guard, name how a supported caller reaches
   the state. For each simplification, show the code to change and explain which
   caller behavior it preserves. Keep guards for real runtime failures.
-- Flag comments that narrate the code. Keep comments that explain ownership,
-  lifetime, or ordering. Apply the [documentation policy](../../../docs/develop-apps/contribute/start-here/coding_standard.md#documentation-obligations).
+- Keep implementation comments to at most two lines. Flag comments that
+  narrate the code. Use comments to explain constraints such as ownership,
+  lifetime, or ordering. Put longer design rationale in the PR.
+- Apply the [documentation policy](../../../docs/develop-apps/contribute/start-here/coding_standard.md#documentation-obligations).
   Check that changed docs help a reader use the API or workflow and that required
   translations and source hashes match.
 - Check the original failing case, the regression result, and the relevant
   package and device. For CI test selection, check the named test executed and
   passed in the intended job. A selection log or skipped result is insufficient.
-  Run focused checks when practical and state what remains unverified.
+  For evidence from an earlier revision, check whether later changes affect
+  what it proves. Run focused checks when practical and state what remains
+  unverified.
 
 ## Report the review
 
-Give the merge verdict, then order findings by impact. For each defect, give the
-file and line, triggering case, consequence, and expected correction. Use a
-question or evidence gap when a defect is uncertain. Separate optional cleanup
-from merge blockers. For self-review, address applicable findings and record a
-one-sentence **Review outcome** in the [PR template](../../../.github/PULL_REQUEST_TEMPLATE.md),
-or write **No findings**.
+Give the merge verdict, then order findings by impact. Report one finding per
+root cause. On follow-up reviews, check prior findings against the current
+diff. For each defect, give the file and line, triggering case, consequence,
+and expected correction. Use a question or evidence gap when a defect is
+uncertain. Separate optional cleanup from merge blockers. For self-review,
+address applicable findings and record a one-sentence **Review outcome** in the
+[PR template](../../../.github/PULL_REQUEST_TEMPLATE.md), or write **No findings**.
