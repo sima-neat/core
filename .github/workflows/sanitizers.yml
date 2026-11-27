@@ -6,10 +6,31 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  resolve-develop:
+    name: resolve-develop
+    if: github.event_name == 'workflow_dispatch' || github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.develop.outputs.sha }}
+    steps:
+      - name: Resolve develop head
+        id: develop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA="$(gh api "repos/${GITHUB_REPOSITORY}/commits/develop" --jq .sha)"
+          if [[ ! "${SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Failed to resolve the develop head commit." >&2
+            exit 1
+          fi
+          echo "Testing develop commit ${SHA}"
+          echo "sha=${SHA}" >> "${GITHUB_OUTPUT}"
+
   build-sanitizers:
     name: build-${{ matrix.mode }}
     if: github.event_name == 'workflow_dispatch' || github.ref_name == 'main'
     runs-on: [self-hosted, Linux, X64, elxr-sdk]
+    needs: resolve-develop
     strategy:
       fail-fast: false
       matrix:
@@ -18,6 +39,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve-develop.outputs.sha }}
 
       - name: Build sanitizer artifacts
         env:
@@ -25,7 +48,9 @@ jobs:
           CXX: clang++
           SIMANEAT_STRICT_WARNINGS: "OFF"
         run: |
-          ./build.sh --all --clean --no-doc --update-sysroot --${{ matrix.mode }}
+          # build.sh picks the Scheduler and LLiMa channel from GITHUB_REF_NAME,
+          # which is main on a scheduled run.
+          GITHUB_REF_NAME=develop ./build.sh --all --clean --no-doc --update-sysroot --${{ matrix.mode }}
 
       - name: Verify build artifacts
         run: |
@@ -43,11 +68,13 @@ jobs:
 
       - name: Compute S3 sanitizer prefix
         id: s3-prefix
+        env:
+          SOURCE_SHA: ${{ needs.resolve-develop.outputs.sha }}
         run: |
-          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          SHORT_SHA="$(echo "${SOURCE_SHA}" | cut -c1-7)"
           MODE="${{ matrix.mode }}"
           echo "short_sha=${SHORT_SHA}" >> "${GITHUB_OUTPUT}"
-          echo "commit_prefix=s3://sima-neat-artifacts/neat/main/${SHORT_SHA}/${MODE}" >> "${GITHUB_OUTPUT}"
+          echo "commit_prefix=s3://sima-neat-artifacts/neat/develop/${SHORT_SHA}/${MODE}" >> "${GITHUB_OUTPUT}"
 
       - name: Prepare sanitizer artifact payload and metadata
         run: |
@@ -73,30 +100,35 @@ jobs:
     name: test-sanitizers
     if: github.event_name == 'workflow_dispatch' || github.ref_name == 'main'
     runs-on: [self-hosted, Linux, ARM64, modalix, dvt-3]
-    needs: build-sanitizers
+    needs:
+      - resolve-develop
+      - build-sanitizers
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve-develop.outputs.sha }}
 
       - name: Install sanitizer dependencies
-        run: ./build.sh --install-deps-only
+        run: GITHUB_REF_NAME=develop ./build.sh --install-deps-only
 
       - name: Run sanitizer gates from uploaded artifacts
         env:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+          SOURCE_SHA: ${{ needs.resolve-develop.outputs.sha }}
         run: |
           if ! command -v sima-cli >/dev/null 2>&1; then
             echo "sima-cli not found on runner." >&2
             exit 1
           fi
 
-          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          SHORT_SHA="$(echo "${SOURCE_SHA}" | cut -c1-7)"
           mkdir -p _work
 
           for MODE in asan-ubsan tsan; do
             echo "[sanitizers] Installing ${MODE} artifacts..."
-            METADATA_URL="https://artifacts.neat.sima.ai/core/main/${SHORT_SHA}/${MODE}/metadata-all.json"
+            METADATA_URL="https://artifacts.neat.sima.ai/core/develop/${SHORT_SHA}/${MODE}/metadata-all.json"
             echo "[sanitizers] Installing from ${METADATA_URL}"
             SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli install -m "${METADATA_URL}"
 

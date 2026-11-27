@@ -5,12 +5,6 @@ run-name: Vulcan fuzz nightly (${{ vars.VULCAN_ENV || 'staging' }})
 on:
   schedule:
     - cron: "30 2 * * *"
-  push:
-    branches:
-      - "release/**"
-      - "feature/nightly"
-    tags:
-      - "v*-rc*"
   workflow_dispatch: {}
 
 permissions:
@@ -20,14 +14,27 @@ permissions:
   packages: read
 
 jobs:
+  # A scheduled run always uses the default branch. Start the fuzz run on
+  # develop instead, so the build and the fuzz targets use develop's head.
+  dispatch-develop:
+    name: Dispatch fuzz run on develop
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch on develop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run vulcan-fuzz-nightly.yml --repo "${GITHUB_REPOSITORY}" --ref develop
+
   resolve-vulcan-config:
     name: Resolve Vulcan Config
+    if: github.event_name != 'schedule'
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
     with:
       vulcan_env: ${{ vars.VULCAN_ENV || 'staging' }}
 
   build-fuzz-artifacts:
-    if: github.event_name != 'push' || github.ref_name == 'feature/nightly' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name != 'schedule'
     uses: ./.github/workflows/vulcan-ci.yml
     with:
       build_mode: fuzz
@@ -36,7 +43,7 @@ jobs:
   run-fuzz:
     name: run-fuzz
     runs-on: [self-hosted, Linux, ARM64, modalix, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}"]
-    if: github.event_name != 'push' || github.ref_name == 'feature/nightly' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name != 'schedule'
     needs:
       - resolve-vulcan-config
       - build-fuzz-artifacts
