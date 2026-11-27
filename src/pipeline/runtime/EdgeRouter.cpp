@@ -1,4 +1,5 @@
 #include "EdgeRouter.h"
+#include "builder/NodeContractProvider.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/RealtimeLinkOptions.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
@@ -335,6 +336,69 @@ void apply_link_stream_id(const ExecutionGraphRuntime& runtime, std::size_t edge
   if (sample.stream_label.empty()) {
     sample.stream_label = stream_id;
   }
+}
+
+// A kernel node reads one dense tensor set. A Bundle carries no tensor-set
+// metadata, so it could never reach one; a joined producer (graphs::Combine
+// into a SimaBEVPool, say) means the fields' tensors in Combine order.
+bool segment_reads_one_kernel_tensor_set(const PipelineSegmentPlan& segment) {
+  for (const auto& node : segment.nodes) {
+    if (!node || node->kind() == "Input") {
+      continue;
+    }
+    const auto* provider = dynamic_cast<const NodeContractProvider*>(node.get());
+    return provider && provider->contract_definition().plugin_kind == "kernel";
+  }
+  return false;
+}
+
+bool append_field_tensors(const simaai::neat::Sample& field, TensorList* out) {
+  switch (field.kind) {
+  case SampleKind::Tensor:
+    if (!field.tensor.has_value()) {
+      return false;
+    }
+    out->push_back(*field.tensor);
+    return true;
+  case SampleKind::TensorSet:
+    if (field.tensors.empty()) {
+      return false;
+    }
+    out->insert(out->end(), field.tensors.begin(), field.tensors.end());
+    return true;
+  case SampleKind::Bundle:
+    if (field.fields.empty()) {
+      return false;
+    }
+    for (const auto& nested : field.fields) {
+      if (!append_field_tensors(nested, out)) {
+        return false;
+      }
+    }
+    return true;
+  case SampleKind::Unknown:
+    break;
+  }
+  return false;
+}
+
+// Leaves the sample untouched unless every field is a tensor payload.
+void flatten_bundle_for_kernel_segment(const PipelineSegmentPlan& segment,
+                                       simaai::neat::Sample& sample) {
+  if (sample.kind != SampleKind::Bundle || sample.fields.empty() ||
+      !segment_reads_one_kernel_tensor_set(segment)) {
+    return;
+  }
+  TensorList tensors;
+  if (!append_field_tensors(sample, &tensors)) {
+    return;
+  }
+  sample.kind = SampleKind::TensorSet;
+  sample.fields.clear();
+  sample.tensor.reset();
+  sample.tensors = std::move(tensors);
+  sample.payload_type = PayloadType::Tensor;
+  sample.media_type = "application/vnd.simaai.tensor";
 }
 
 } // namespace
@@ -1111,6 +1175,8 @@ bool EdgeRouter::dispatch_to_target(const DownstreamTarget& target, Sample&& sam
     }
 
     auto& pipe = *runtime_->pipelines[target.index];
+    // Before the lazy build: the segment compiles from, and runs on, the same tensor set.
+    flatten_bundle_for_kernel_segment(pipe.seg, sample);
     auto& telemetry = pipe.transport.telemetry;
     std::string build_err;
     const auto ensure_start = std::chrono::steady_clock::now();
