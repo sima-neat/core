@@ -5,20 +5,35 @@ description: Add, change, or retire Core tests, replace model or media fixtures,
 
 # Update Core tests
 
-1. Identify the behavior the test protects, its CTest name or pytest node ID,
-   and the host, DevKit shard, or weekly job that owns it. Use the
+## Workflow
+
+1. **Find the lane.** Identify the behavior the test protects and its CTest
+   name or pytest node ID. Trace the CMake registration and labels, or the
+   pytest file and markers, to the job's selector in
+   [Vulcan CI](../../../.github/workflows/vulcan-ci.yml) or
+   [Long Tests Weekly](../../../.github/workflows/long-tests-weekly.yml).
+   Check the job's inclusions and exclusions. Build Tooling Tests lists pytest
+   files explicitly, so update that list when adding a file to the job.
+2. **Prepare fixtures.** Trace the selected job to its existing fixture helper
+   or preparation step. For a Model Browser fixture used by a partitioned
+   DevKit E2E test, reuse or extend the fixture mapping in the
+   [E2E partitioner](../../../tools/ci/partition_devkit_e2e.py). It prepares
+   archives for selected tests and passes their resolved paths to CTest.
+   Prepare model and media fixtures only in jobs that need them. Pass the
+   resolved path to the test. Keep downloads, cache lookup, and locking in
+   fixture preparation.
+   Preserve the assertion when changing a fixture. An archive pinned for a
+   known bug must still let the regression pass with the fix.
+3. **Run the matching profile.** Use the profile that selects the test.
+   Enable `run_long_tests` for a Modalix case selected only in long mode.
+   Use the repo's DevKit wrappers for AArch64 binaries. Keep required tests
+   strict so missing fixtures or coverage fail their lane. Follow the
    [test requirements](../../../docs/develop-apps/contribute/build-test/test_requirements.md).
-   Preserve the assertion on that behavior when changing a model or fixture.
-2. Use an existing fixture helper or the preparation step for that lane in
-   [Vulcan CI](../../../.github/workflows/vulcan-ci.yml). Prepare model and media
-   fixtures only in jobs that need them. Pass the resolved path to the test.
-   Keep downloads, cache lookup, and locking in fixture preparation. An archive
-   pinned to exercise a known bug must still let the regression pass with the fix.
-3. Keep required tests strict. Missing fixtures and missing coverage should fail
-   their lane. Use the repo's DevKit wrappers for AArch64 binaries and keep the
-   appropriate capability profile.
-4. Check the intended test result in the job artifact. For CTest, confirm the
-   case ran and passed in JUnit, including no `<skipped/>`, `<failure/>`, or
-   `<error/>` for that case. For pytest, check the node's setup, call, and
-   teardown outcomes. Use the existing lane coverage check to confirm selection
-   matches execution. Link the run and name the tested target and fixture in the PR.
+4. **Verify and report.** Use the job's coverage artifacts or log to confirm
+   the named case ran and passed. For CTest JUnit results, check that the case
+   ran and has no `<skipped/>`, `<failure/>`, or `<error/>`. For pytest coverage
+   results, check setup, call, and teardown. Use the existing lane coverage
+   check to confirm selection matches execution. For an aggregate-only log,
+   report a focused run of the named case in the same profile and note any
+   outstanding CI verification. Link the result and name the tested profile,
+   target, and fixture in the PR.
