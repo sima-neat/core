@@ -171,11 +171,27 @@ Inputs swapped_slots(const Inputs& inputs) {
   return out;
 }
 
+// The part of a route name after the last '/': the compiler's stage prefix, such as cast_8/,
+// follows its node numbering and may change.
+std::string leaf_name(const std::string& name) {
+  const std::size_t slash = name.rfind('/');
+  return slash == std::string::npos ? name : name.substr(slash + 1);
+}
+
+// Every vector estimator result goes through here, so each one is checked against the output
+// contract: one float32 `velocity` output [2,1,192,144].
 std::vector<float> single_output(const simaai::neat::TensorList& outs) {
   if (outs.size() != 1)
     throw std::runtime_error("expected one vector estimator output, got " +
                              std::to_string(outs.size()));
-  return read_floats(outs[0]);
+  const simaai::neat::Tensor& t = outs[0];
+  if (leaf_name(t.route.name) != "velocity" || t.shape != kVectorOutput ||
+      t.dtype != simaai::neat::TensorDType::Float32)
+    throw std::runtime_error("output contract: output is '" + t.route.name + "' " +
+                             shape_string(t.shape) + " dtype " +
+                             std::to_string(static_cast<int>(t.dtype)) +
+                             ", expected float32 'velocity' " + shape_string(kVectorOutput));
+  return read_floats(t);
 }
 
 bool throws(const std::function<void()>& fn, std::string* what) {
@@ -273,9 +289,10 @@ int main(int argc, char** argv) {
       std::cout << "[OUTPUT] vector_estimator index=" << i << " name='" << base_outs[i].route.name
                 << "' dtype=" << static_cast<int>(base_outs[i].dtype)
                 << " shape=" << shape_string(base_outs[i].shape) << "\n";
-    check(base_outs.size() == 1 && base_outs[0].shape == kVectorOutput &&
+    check(base_outs.size() == 1 && leaf_name(base_outs[0].route.name) == "velocity" &&
+              base_outs[0].shape == kVectorOutput &&
               base_outs[0].dtype == simaai::neat::TensorDType::Float32,
-          "one run of one batch-2 input set returns one float32 [2,1,192,144] output");
+          "one run of one batch-2 input set returns one float32 velocity [2,1,192,144] output");
     const std::vector<float> a = single_output(base_outs);
     check(all_finite(a), "vector estimator output is finite");
     // Kept to check that later runs do not write into a returned output.
@@ -372,11 +389,14 @@ int main(int argc, char** argv) {
     }
 
     // Each malformed input set gets its own Runner, so a check cannot pass on an earlier error.
-    auto check_rejected = [&](const std::string& name, const simaai::neat::TensorList& bad) {
+    // The refusal must name its cause, so an unrelated error such as a timeout cannot pass.
+    auto check_rejected = [&](const std::string& name, const simaai::neat::TensorList& bad,
+                              const std::string& reason) {
       auto fresh = vector.build(to_tensors(base));
       std::string what;
       const bool rejected = throws([&] { (void)fresh.run(bad, kTimeoutMs); }, &what);
-      check(rejected, name + " is rejected", what);
+      check(rejected && what.find(reason) != std::string::npos,
+            name + " is rejected for '" + reason + "'", what);
       try {
         const std::vector<float> again = single_output(fresh.run(to_tensors(base), kTimeoutMs));
         check(bitwise_equal(again, a), "valid run after " + name + " matches the base run",
@@ -390,19 +410,20 @@ int main(int argc, char** argv) {
       simaai::neat::TensorList bad = to_tensors(base);
       bad[kLatentInput] = simaai::neat::Tensor::from_vector(
           slot(base[kLatentInput], 0), kVocoderInput, simaai::neat::TensorMemory::EV74);
-      check_rejected("a batch-1 noisy latent", bad);
+      check_rejected("a batch-1 noisy latent", bad,
+                     "ingress[0] does not match canonical logical_shape");
     }
     {
       simaai::neat::TensorList bad = to_tensors(base);
       std::vector<uint8_t> bytes(base[kLatentInput].size(), 0);
       bad[kLatentInput] = simaai::neat::Tensor::from_vector(bytes, kVectorInputs[kLatentInput],
                                                             simaai::neat::TensorMemory::EV74);
-      check_rejected("a uint8 noisy latent", bad);
+      check_rejected("a uint8 noisy latent", bad, "tensor format does not match dtype");
     }
     {
       simaai::neat::TensorList bad = to_tensors(base);
       bad.pop_back();
-      check_rejected("seven inputs", bad);
+      check_rejected("seven inputs", bad, "expected exactly 8 ingress tensor inputs");
     }
 
     if (failures > 0) {
