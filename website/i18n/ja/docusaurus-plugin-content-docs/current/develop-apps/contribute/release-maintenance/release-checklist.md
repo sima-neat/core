@@ -91,8 +91,8 @@ GitHub リポジトリの設定を行います。
 この例では、既存の `release-0.6` で `v0.6.3` をリリースします。
 
 1. `release-0.6` を準備します。
-   - `main` がまだ 0.6 のラインにある場合は、メジャーリリースの手順 1 と同様に `develop` で `package-version` を `0.6.3` に設定し、`develop` を `main` にマージしてから、プルリクエストで `main` を `release-0.6` にマージします。
-   - `main` がすでに 0.7 に移行している場合は、意図した修正とバージョンの更新だけを `release-0.6` に取り込みます。修正を `git cherry-pick -x` で取り込み、`package-version` を `0.6.3` に設定したブランチから、`release-0.6` へのプルリクエストを作成します。
+   - `develop` を `main` 経由でマージしたときに `release-0.6` に入るすべての変更が `0.6.3` 向けである場合は、そのマージの手順を使います。メジャーリリースの手順 1 と同様に `develop` で `package-version` を `0.6.3` に設定し、`develop` を `main` にマージしてから、プルリクエストで `main` を `release-0.6` にマージします。
+   - それ以外の場合は、`release-0.6` からブランチを作成し、意図した修正だけを `git cherry-pick -x` で取り込み、`package-version` を `0.6.3` に設定して、`release-0.6` へのプルリクエストを作成します。
 2. `git fetch origin` を実行します。タグを付けるコミットは `git rev-parse origin/release-0.6` です。タグが作成されるまで、`release-0.6` には何もマージしません。
 3. そのコミットで「タグ付けの前」のチェックを実行します。
 4. **Actions → Release → Run workflow** を開きます。`release_line` を `0.6`、`tag` を `0.6.3` に設定し、`main` を `source_branch` のままにして、`prerelease` はオフのままにします。新しいラインがすでに公開されている場合は `latest` をオフにします。`branch_exists_behavior` の既定値が `reuse` であるため、ワークフローは `release-0.6` を再利用し、その最新のコミットに `v0.6.3` タグを付けて、リリースの下書きを作成します。

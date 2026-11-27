@@ -100,8 +100,8 @@ This example releases `v0.7.0` on a new line.
 This example releases `v0.6.3` on the existing `release-0.6`.
 
 1. Prepare `release-0.6`:
-   - If `main` is still on the 0.6 line, set `package-version` to `0.6.3` on `develop` as in step 1 of the major release, merge `develop` into `main`, then merge `main` into `release-0.6` through a pull request.
-   - If `main` has already moved to 0.7, bring only the intended fixes and the version bump into `release-0.6`. Open a pull request into `release-0.6` from a branch that cherry-picks the fixes with `git cherry-pick -x` and sets `package-version` to `0.6.3`.
+   - If every change that would reach `release-0.6` by merging `develop` through `main` is intended for `0.6.3`, use that merge path: set `package-version` to `0.6.3` on `develop` as in step 1 of the major release, merge `develop` into `main`, then merge `main` into `release-0.6` through a pull request.
+   - Otherwise, branch from `release-0.6`, cherry-pick only the intended fixes with `git cherry-pick -x`, set `package-version` to `0.6.3`, and open a pull request back to `release-0.6`.
 2. Run `git fetch origin`. The commit to tag is `git rev-parse origin/release-0.6`. Do not merge anything into `release-0.6` until the tag exists.
 3. Run the checks in Before Tagging on that commit.
 4. Open **Actions → Release → Run workflow**. Set `release_line` to `0.6` and `tag` to `0.6.3`, keep `main` as `source_branch` and leave `prerelease` off. Turn `latest` off when a newer line is already published. The workflow reuses `release-0.6`, because `branch_exists_behavior` defaults to `reuse`, tags its head `v0.6.3` and drafts the release.

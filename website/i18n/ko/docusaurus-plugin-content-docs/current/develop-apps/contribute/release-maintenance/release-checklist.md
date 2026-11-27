@@ -91,8 +91,8 @@ Done이어야 하며, 그 후 해당 이슈의 Release Status를 `released`로 �
 이 예시는 기존 `release-0.6`에서 `v0.6.3`을 릴리스합니다.
 
 1. `release-0.6`을 준비합니다.
-   - `main`이 아직 0.6 라인에 있으면 메이저 릴리스의 1단계처럼 `develop`에서 `package-version`을 `0.6.3`으로 설정하고, `develop`을 `main`에 병합한 다음, 풀 리퀘스트로 `main`을 `release-0.6`에 병합합니다.
-   - `main`이 이미 0.7로 넘어갔다면 의도한 수정 사항과 버전 변경만 `release-0.6`에 가져옵니다. 수정 사항을 `git cherry-pick -x`로 가져오고 `package-version`을 `0.6.3`으로 설정한 브랜치에서 `release-0.6`으로 풀 리퀘스트를 엽니다.
+   - `develop`을 `main`을 거쳐 병합할 때 `release-0.6`에 들어가는 모든 변경 사항이 `0.6.3`을 위한 것이라면 그 병합 경로를 사용합니다. 메이저 릴리스의 1단계처럼 `develop`에서 `package-version`을 `0.6.3`으로 설정하고, `develop`을 `main`에 병합한 다음, 풀 리퀘스트로 `main`을 `release-0.6`에 병합합니다.
+   - 그렇지 않으면 `release-0.6`에서 브랜치를 만들고, 의도한 수정 사항만 `git cherry-pick -x`로 가져오고, `package-version`을 `0.6.3`으로 설정한 뒤, `release-0.6`으로 풀 리퀘스트를 엽니다.
 2. `git fetch origin`을 실행합니다. 태그를 지정할 커밋은 `git rev-parse origin/release-0.6`입니다. 태그가 만들어질 때까지 `release-0.6`에는 아무것도 병합하지 않습니다.
 3. 그 커밋에서 태그 지정 전 절의 검사를 실행합니다.
 4. **Actions → Release → Run workflow**를 엽니다. `release_line`을 `0.6`으로, `tag`를 `0.6.3`으로 설정하고, `main`을 `source_branch`로 그대로 두며, `prerelease`는 끈 상태로 둡니다. 더 새로운 라인이 이미 게시되었다면 `latest`를 끕니다. `branch_exists_behavior`의 기본값이 `reuse`이므로 워크플로는 `release-0.6`을 재사용하고, 그 최신 커밋에 `v0.6.3` 태그를 지정한 뒤 릴리스 초안을 만듭니다.

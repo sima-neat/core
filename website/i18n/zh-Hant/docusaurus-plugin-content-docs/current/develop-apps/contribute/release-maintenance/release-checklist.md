@@ -90,8 +90,8 @@ slug: /develop-apps/contribute/release-checklist
 此範例在既有的 `release-0.6` 上發布 `v0.6.3`。
 
 1. 準備 `release-0.6`：
-   - 若 `main` 仍在 0.6 版本線上，請依照主要發布的步驟 1，在 `develop` 上將 `package-version` 設為 `0.6.3`，將 `develop` 合併到 `main`，然後透過拉取請求將 `main` 合併到 `release-0.6`。
-   - 若 `main` 已進入 0.7 版本線，只將預定的修正和版本更新帶入 `release-0.6`。從一個以 `git cherry-pick -x` 挑選修正、並將 `package-version` 設為 `0.6.3` 的分支，開啟合併到 `release-0.6` 的拉取請求。
+   - 若透過 `main` 合併 `develop` 時會進入 `release-0.6` 的所有變更都預定用於 `0.6.3`，請使用該合併路徑：依照主要發布的步驟 1，在 `develop` 上將 `package-version` 設為 `0.6.3`，將 `develop` 合併到 `main`，然後透過拉取請求將 `main` 合併到 `release-0.6`。
+   - 否則，請從 `release-0.6` 建立分支，以 `git cherry-pick -x` 只挑選預定的修正，將 `package-version` 設為 `0.6.3`，並開啟合併回 `release-0.6` 的拉取請求。
 2. 執行 `git fetch origin`。要加上標籤的提交為 `git rev-parse origin/release-0.6`。在標籤建立之前，不要將任何內容合併到 `release-0.6`。
 3. 在該提交上執行「加上標籤之前」中的檢查。
 4. 開啟 **Actions → Release → Run workflow**。將 `release_line` 設為 `0.6`、`tag` 設為 `0.6.3`，保留 `main` 作為 `source_branch`，`prerelease` 保持關閉。若較新的版本線已發布，請關閉 `latest`。由於 `branch_exists_behavior` 預設為 `reuse`，工作流程會重複使用 `release-0.6`，在其最新提交上加上 `v0.6.3` 標籤並建立發布版草稿。
