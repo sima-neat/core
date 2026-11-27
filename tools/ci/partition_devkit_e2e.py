@@ -126,6 +126,7 @@ def prepare_model_browser_suite(selected, env, tmp):
         prepare_fixture(model_id, variant, suite_dir)
     env['SIMA_MODEL_BROWSER_DIR'] = str(suite_dir)
 
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--index', type=int, choices=(0, 1), required=True)

@@ -12,8 +12,6 @@
 #include <system_error>
 #include <vector>
 
-#include <fcntl.h>
-#include <sys/file.h>
 #include <unistd.h>
 
 namespace sima_test {

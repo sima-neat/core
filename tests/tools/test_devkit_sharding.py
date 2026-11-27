@@ -196,6 +196,7 @@ def test_model_browser_suite_prepares_only_selected_packages(tmp_path, monkeypat
     partitioner.prepare_model_browser_suite({'other'}, empty, tmp_path)
     assert calls == [] and empty == {}
 
+
 def test_real_ctest_partition_executes_all_selected_tests(tmp_path):
     # Uses harmless host Python registrations; no aarch64 binary is executed.
     marker = tmp_path / 'executed'
