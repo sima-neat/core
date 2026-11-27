@@ -64,6 +64,8 @@ struct BackboneOut {
   std::vector<double> boxes;
 };
 
+constexpr std::size_t kFeatureCount = static_cast<std::size_t>(32) * 32 * 256;
+
 struct DecoderOut {
   std::vector<double> dets;
   std::vector<double> labels;
@@ -396,6 +398,7 @@ int main(int argc, char** argv) {
           "proposal_boxes [1,1024,4]",
           bb_mismatch);
     const BackboneOut people_bb = read_backbone(people_bb_outs, backbone_specs);
+    const std::vector<double> people_features = tensor_values(people_bb.features, kFeatureCount);
     check(all_finite(people_bb.scores) && all_finite(people_bb.boxes),
           "proposal scores and boxes are finite");
     // Read from the model's description, not seen on a board yet: the proposal boxes are
@@ -454,6 +457,8 @@ int main(int argc, char** argv) {
     BackboneOut labrador_bb;
     const DecoderOut labrador_ref =
         read_decoder(run_pipeline(labrador, &labrador_bb), decoder_specs);
+    const std::vector<double> labrador_features =
+        tensor_values(labrador_bb.features, kFeatureCount);
     const auto labrador_dets = decode(labrador_ref, labrador.width, labrador.height);
     print_top("labrador", labrador_dets, 3);
     check(!labrador_dets.empty() && labrador_dets.front().class_id == kCocoDog &&
@@ -492,9 +497,13 @@ int main(int argc, char** argv) {
         simaai::neat::Sample sample = backbone_runner.pull(kTimeoutMs);
         const BackboneOut got =
             read_backbone(simaai::neat::tensors_from_sample(sample), backbone_specs);
-        const BackboneOut& want = order[i] == &people ? people_bb : labrador_bb;
+        const bool is_people = order[i] == &people;
+        const BackboneOut& want = is_people ? people_bb : labrador_bb;
+        // backbone_features is what the decoder consumes, so it is compared too.
         const double diff =
-            std::max(max_abs_diff(got.scores, want.scores), max_abs_diff(got.boxes, want.boxes));
+            std::max({max_abs_diff(got.scores, want.scores), max_abs_diff(got.boxes, want.boxes),
+                      max_abs_diff(tensor_values(got.features, kFeatureCount),
+                                   is_people ? people_features : labrador_features)});
         if (diff > kTolerance) {
           ok = false;
           detail +=
