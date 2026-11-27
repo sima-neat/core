@@ -125,13 +125,6 @@ std::vector<double> tensor_values(const simaai::neat::Tensor& tensor, std::size_
   return out;
 }
 
-std::size_t element_count(const simaai::neat::Tensor& tensor) {
-  std::size_t n = 1;
-  for (int64_t d : tensor.shape)
-    n *= static_cast<std::size_t>(std::max<int64_t>(d, 0));
-  return tensor.shape.empty() ? 0 : n;
-}
-
 bool all_finite(const std::vector<double>& values) {
   return std::all_of(values.begin(), values.end(), [](double v) { return std::isfinite(v); });
 }
@@ -147,16 +140,66 @@ double max_abs_diff(const std::vector<double>& a, const std::vector<double>& b) 
   return diff;
 }
 
-BackboneOut read_backbone(const simaai::neat::TensorList& outs) {
-  if (outs.size() != 3)
-    throw std::runtime_error("expected 3 backbone outputs, got " + std::to_string(outs.size()));
+struct OutputContract {
+  const char* name;
+  std::vector<int64_t> shape;
+};
+
+const std::vector<OutputContract> kBackboneContract = {{"backbone_features", {1, 32, 32, 256}},
+                                                       {"proposal_scores", {1, kProposals}},
+                                                       {"proposal_boxes", {1, kProposals, 4}}};
+const std::vector<OutputContract> kDecoderContract = {{"dets", {1, kQueries, 4}},
+                                                      {"labels", {1, kQueries, kClasses}}};
+
+// The part of a route name after the last '/': the compiler's stage prefix, such as cast_5/,
+// follows its node numbering and may change.
+std::string leaf_name(const std::string& name) {
+  const std::size_t slash = name.rfind('/');
+  return slash == std::string::npos ? name : name.substr(slash + 1);
+}
+
+// Empty when every output has the declared name, shape and a dtype from the model's output spec;
+// otherwise what differs.
+std::string contract_mismatch(const simaai::neat::TensorList& outs,
+                              const std::vector<simaai::neat::TensorSpec>& specs,
+                              const std::vector<OutputContract>& contract) {
+  if (outs.size() != contract.size() || specs.size() != contract.size())
+    return std::to_string(outs.size()) + " outputs and " + std::to_string(specs.size()) +
+           " output specs, expected " + std::to_string(contract.size());
+  std::string detail;
+  for (std::size_t i = 0; i < contract.size(); ++i) {
+    const simaai::neat::Tensor& t = outs[i];
+    const auto& dtypes = specs[i].dtypes;
+    const bool dtype_ok = std::find(dtypes.begin(), dtypes.end(), t.dtype) != dtypes.end();
+    if (leaf_name(t.route.name) != contract[i].name || t.shape != contract[i].shape || !dtype_ok)
+      detail += "output " + std::to_string(i) + " is '" + t.route.name + "' " +
+                shape_string(t.shape) + " dtype " + std::to_string(static_cast<int>(t.dtype)) +
+                ", expected '" + contract[i].name + "' " + shape_string(contract[i].shape) +
+                " with a dtype from output_specs(); ";
+  }
+  return detail;
+}
+
+void require_contract(const simaai::neat::TensorList& outs,
+                      const std::vector<simaai::neat::TensorSpec>& specs,
+                      const std::vector<OutputContract>& contract) {
+  const std::string mismatch = contract_mismatch(outs, specs, contract);
+  if (!mismatch.empty())
+    throw std::runtime_error("output contract: " + mismatch);
+}
+
+// Every backbone and decoder result goes through these, so each one is checked against the
+// contract.
+BackboneOut read_backbone(const simaai::neat::TensorList& outs,
+                          const std::vector<simaai::neat::TensorSpec>& specs) {
+  require_contract(outs, specs, kBackboneContract);
   return {outs[0], tensor_values(outs[1], kProposals),
           tensor_values(outs[2], static_cast<std::size_t>(kProposals) * 4)};
 }
 
-DecoderOut read_decoder(const simaai::neat::TensorList& outs) {
-  if (outs.size() != 2)
-    throw std::runtime_error("expected 2 decoder outputs, got " + std::to_string(outs.size()));
+DecoderOut read_decoder(const simaai::neat::TensorList& outs,
+                        const std::vector<simaai::neat::TensorSpec>& specs) {
+  require_contract(outs, specs, kDecoderContract);
   return {tensor_values(outs[0], static_cast<std::size_t>(kQueries) * 4),
           tensor_values(outs[1], static_cast<std::size_t>(kQueries) * kClasses)};
 }
@@ -310,6 +353,8 @@ int main(int argc, char** argv) {
 
     simaai::neat::Model backbone(backbone_path);
     simaai::neat::Model decoder(decoder_path);
+    const auto backbone_specs = backbone.output_specs();
+    const auto decoder_specs = decoder.output_specs();
     for (const auto& s : backbone.input_specs())
       std::cout << "[SPEC] backbone input shape=" << shape_string(s.shape) << "\n";
     for (const auto& s : backbone.output_specs())
@@ -344,17 +389,13 @@ int main(int argc, char** argv) {
                 << "' dtype=" << static_cast<int>(t.dtype) << " shape=" << shape_string(t.shape)
                 << "\n";
     }
-    check(people_bb_outs.size() == 3, "backbone returns three outputs",
-          std::to_string(people_bb_outs.size()));
-    if (people_bb_outs.size() == 3) {
-      check(element_count(people_bb_outs[1]) == kProposals, "proposal_scores holds 1024 values",
-            shape_string(people_bb_outs[1].shape));
-      check(element_count(people_bb_outs[2]) == static_cast<std::size_t>(kProposals) * 4,
-            "proposal_boxes holds 1024 rows of 4", shape_string(people_bb_outs[2].shape));
-      check(element_count(people_bb_outs[0]) > 0, "backbone_features is not empty",
-            shape_string(people_bb_outs[0].shape));
-    }
-    const BackboneOut people_bb = read_backbone(people_bb_outs);
+    const std::string bb_mismatch =
+        contract_mismatch(people_bb_outs, backbone_specs, kBackboneContract);
+    check(bb_mismatch.empty(),
+          "backbone outputs are backbone_features [1,32,32,256], proposal_scores [1,1024] and "
+          "proposal_boxes [1,1024,4]",
+          bb_mismatch);
+    const BackboneOut people_bb = read_backbone(people_bb_outs, backbone_specs);
     check(all_finite(people_bb.scores) && all_finite(people_bb.boxes),
           "proposal scores and boxes are finite");
     // Read from the model's description, not seen on a board yet: the proposal boxes are
@@ -365,7 +406,8 @@ int main(int argc, char** argv) {
 
     const std::vector<int> people_top = top_proposals(people_bb.scores);
     {
-      const BackboneOut again = read_backbone(backbone_runner.run({people.tensor}, kTimeoutMs));
+      const BackboneOut again =
+          read_backbone(backbone_runner.run({people.tensor}, kTimeoutMs), backbone_specs);
       check(top_proposals(again.scores) == people_top,
             "the top 300 proposals are the same on a second run of the same image");
     }
@@ -374,7 +416,7 @@ int main(int argc, char** argv) {
         people_bb.features.cvu(), proposals_tensor(people_bb.boxes, people_top)});
 
     auto run_pipeline = [&](const Image& img, BackboneOut* bb_out) {
-      BackboneOut bb = read_backbone(backbone_runner.run({img.tensor}, kTimeoutMs));
+      BackboneOut bb = read_backbone(backbone_runner.run({img.tensor}, kTimeoutMs), backbone_specs);
       const auto order = top_proposals(bb.scores);
       // The decoder's EV74 input stage cannot read the backbone's output memory; cvu() copies the
       // features, as the models repository's application flow does.
@@ -392,15 +434,11 @@ int main(int argc, char** argv) {
                 << "' dtype=" << static_cast<int>(t.dtype) << " shape=" << shape_string(t.shape)
                 << "\n";
     }
-    check(people_dec_outs.size() == 2, "decoder returns two outputs",
-          std::to_string(people_dec_outs.size()));
-    if (people_dec_outs.size() == 2) {
-      check(element_count(people_dec_outs[0]) == static_cast<std::size_t>(kQueries) * 4,
-            "dets holds 300 rows of 4", shape_string(people_dec_outs[0].shape));
-      check(element_count(people_dec_outs[1]) == static_cast<std::size_t>(kQueries) * kClasses,
-            "labels holds 300 rows of 91", shape_string(people_dec_outs[1].shape));
-    }
-    const DecoderOut people_ref = read_decoder(people_dec_outs);
+    const std::string dec_mismatch =
+        contract_mismatch(people_dec_outs, decoder_specs, kDecoderContract);
+    check(dec_mismatch.empty(), "decoder outputs are dets [1,300,4] and labels [1,300,91]",
+          dec_mismatch);
+    const DecoderOut people_ref = read_decoder(people_dec_outs, decoder_specs);
     check(all_finite(people_ref.dets) && all_finite(people_ref.labels),
           "decoder outputs are finite");
 
@@ -414,7 +452,8 @@ int main(int argc, char** argv) {
           "class 1, score >= 0.5, IoU >= 0.5");
 
     BackboneOut labrador_bb;
-    const DecoderOut labrador_ref = read_decoder(run_pipeline(labrador, &labrador_bb));
+    const DecoderOut labrador_ref =
+        read_decoder(run_pipeline(labrador, &labrador_bb), decoder_specs);
     const auto labrador_dets = decode(labrador_ref, labrador.width, labrador.height);
     print_top("labrador", labrador_dets, 3);
     check(!labrador_dets.empty() && labrador_dets.front().class_id == kCocoDog &&
@@ -428,7 +467,7 @@ int main(int argc, char** argv) {
       bool ok = true;
       std::string detail;
       for (std::size_t i = 0; i < order.size(); ++i) {
-        const DecoderOut got = read_decoder(run_pipeline(*order[i], nullptr));
+        const DecoderOut got = read_decoder(run_pipeline(*order[i], nullptr), decoder_specs);
         const DecoderOut& want = order[i] == &people ? people_ref : labrador_ref;
         const double diff =
             std::max(max_abs_diff(got.dets, want.dets), max_abs_diff(got.labels, want.labels));
@@ -451,7 +490,8 @@ int main(int argc, char** argv) {
       std::string detail;
       for (std::size_t i = 0; i < order.size(); ++i) {
         simaai::neat::Sample sample = backbone_runner.pull(kTimeoutMs);
-        const BackboneOut got = read_backbone(simaai::neat::tensors_from_sample(sample));
+        const BackboneOut got =
+            read_backbone(simaai::neat::tensors_from_sample(sample), backbone_specs);
         const BackboneOut& want = order[i] == &people ? people_bb : labrador_bb;
         const double diff =
             std::max(max_abs_diff(got.scores, want.scores), max_abs_diff(got.boxes, want.boxes));
