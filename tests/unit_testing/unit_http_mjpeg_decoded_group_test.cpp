@@ -2,6 +2,8 @@
 #include "nodes/groups/GroupOutputSpec.h"
 
 #include "gst/GstHelpers.h"
+#include "gst/GstInit.h"
+#include "gst/internal/GstParseLaunch.h"
 #include "nodes/common/Caps.h"
 #include "nodes/common/EncodedCapsFixup.h"
 #include "nodes/common/JpegParse.h"
@@ -46,14 +48,14 @@ void check_multipart_pts(bool do_timestamp, const std::vector<GstClockTime>& exp
     gst_element_set_state(pipe, GST_STATE_NULL);
     gst_object_unref(pipe);
   };
-  const std::unique_ptr<GstElement, decltype(destroy_pipeline)> pipeline(
-      gst_parse_launch("appsrc name=source format=time "
-                       "caps=\"multipart/x-mixed-replace,boundary=frame\" "
-                       "! multipartdemux ! identity name=n2_encoded_capsfix "
-                       "! appsink name=sink sync=false",
-                       nullptr),
-      destroy_pipeline);
-  require(pipeline != nullptr, "could not create multipart timestamp test pipeline");
+  auto parsed = gst::parse_launch("appsrc name=source format=time "
+                                  "caps=\"multipart/x-mixed-replace,boundary=frame\" "
+                                  "! multipartdemux ! identity name=n2_encoded_capsfix "
+                                  "! appsink name=sink sync=false");
+  require(parsed.get() != nullptr, "could not create multipart timestamp test pipeline: " +
+                                       std::string(parsed.error_message()));
+  const std::unique_ptr<GstElement, decltype(destroy_pipeline)> pipeline(parsed.release(),
+                                                                         destroy_pipeline);
   using ElementPtr = std::unique_ptr<GstElement, decltype(&gst_object_unref)>;
   const ElementPtr source(gst_bin_get_by_name(GST_BIN(pipeline.get()), "source"), gst_object_unref);
   const ElementPtr sink(gst_bin_get_by_name(GST_BIN(pipeline.get()), "sink"), gst_object_unref);
@@ -183,7 +185,7 @@ void require_backend_shape(const Graph& graph, const std::string& label) {
 
 int main() {
   try {
-    gst_init(nullptr, nullptr);
+    simaai::neat::gst_init_once();
     // The early second read must leave room to accept the third read's PTS.
     check_multipart_pts(true, {80 * GST_MSECOND, 120 * GST_MSECOND, 121 * GST_MSECOND,
                                161 * GST_MSECOND, 180 * GST_MSECOND, 220 * GST_MSECOND});
