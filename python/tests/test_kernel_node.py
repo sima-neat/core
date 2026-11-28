@@ -99,6 +99,8 @@ def test_kernel_options_round_trip():
   assert options.outputs is None
   options.library = "/opt/providers/libexample.so"
   assert options.library == "/opt/providers/libexample.so"
+  options.library = None
+  assert options.library is None
   options.target = pyneat.SimaKernelTarget.EV74
   assert options.target == pyneat.SimaKernelTarget.EV74
   with pytest.raises(TypeError, match="list\\[int\\] or list\\[float\\]"):

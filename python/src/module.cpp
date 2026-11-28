@@ -4214,8 +4214,10 @@ NB_MODULE(_pyneat_core, m) {
              const std::optional<std::vector<KernelOutputTuple>>& outputs) {
             options.outputs = kernel_outputs_from_python(outputs);
           },
+          nb::for_setter(nb::arg("outputs").none()),
           "list[tuple[list[int], str]] or None; dtypes uint8, int8, int32, float32, bfloat16")
-      .def_rw("library", &simaai::neat::KernelOptions::library);
+      .def_rw("library", &simaai::neat::KernelOptions::library,
+              nb::for_setter(nb::arg("library").none()));
   m.def("load_kernel_library", &simaai::neat::load_kernel_library, "path"_a,
         "Load a kernels provider library for the whole process; returns its operation names.");
   nb::enum_<simaai::neat::SimaEncodeType>(m, "SimaEncodeType")
