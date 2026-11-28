@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <utility>
 
@@ -139,8 +140,17 @@ bool compile_bev_contract(const std::string& node_kind, const std::string& eleme
   const auto contract = std::get<rt::KernelInspection>(std::move(inspected));
   if (contract.target() != plan.target ||
       contract.input_requirements().size() != plan.inputs.size() ||
-      contract.output_requirements().size() != plan.outputs.size())
+      contract.output_requirements().size() != plan.outputs.size() ||
+      contract.outputs().size() != plan.outputs.size())
     throw std::invalid_argument(node_kind + ": checked executable differs from its request");
+  // The published tensors are sized from the request, so a checked output of
+  // another shape or element type would be published with mismatched buffers.
+  for (std::size_t index = 0; index < plan.outputs.size(); ++index) {
+    const auto& checked = contract.outputs()[index];
+    if (checked.shape != plan.outputs[index].shape || checked.dtype != plan.outputs[index].dtype)
+      throw std::invalid_argument(node_kind + ": " + plan.operation + " checked " +
+                                  plan.published[index].name + " differs from its request");
+  }
 
   CompiledKernelContract compiled;
   auto& runtime = compiled.runtime_contract;
@@ -205,98 +215,71 @@ bool compile_bev_contract(const std::string& node_kind, const std::string& eleme
     error->clear();
   return true;
 }
+
+// Every kernel Node compiles the same way; only its request builder differs.
+template <class KernelNode, class BuildRequest>
+bool compile_kernel_node(const KernelNode& node, const ContractCompileInput& input,
+                         CompiledNodeContract* out, std::string* error, BuildRequest&& build) {
+  try {
+    const auto node_kind = node.kind();
+    std::optional<CompiledRuntimeContract> ingress;
+    const auto& upstream = resolve_inputs(input, node_kind, ingress);
+    const auto facts =
+        bev_tensor_facts(upstream, ingress ? nullptr : input.immediate_upstream, node_kind);
+    const auto plan = build(std::span<const TensorFact>(facts));
+    return compile_bev_contract(node_kind, node.element_names(input.node_index).front(),
+                                node.contract_definition(), upstream, ingress.has_value(), plan,
+                                out, error);
+  } catch (const std::exception& exception) {
+    if (error)
+      *error = exception.what();
+    return false;
+  }
+}
 } // namespace
 
 bool SimaVoxelize::compile_node_contract(const ContractCompileInput& input,
                                          CompiledNodeContract* out, std::string* error) const {
-  try {
-    std::optional<CompiledRuntimeContract> ingress;
-    const auto& upstream = resolve_inputs(input, kind(), ingress);
-    const auto facts =
-        bev_tensor_facts(upstream, ingress ? nullptr : input.immediate_upstream, kind());
-    const auto plan = kr::voxelize_request(opt_, facts);
-    return compile_bev_contract(kind(), element_names(input.node_index).front(),
-                                contract_definition(), upstream, ingress.has_value(), plan, out,
-                                error);
-  } catch (const std::exception& exception) {
-    if (error)
-      *error = exception.what();
-    return false;
-  }
+  return compile_kernel_node(*this, input, out, error, [&](std::span<const TensorFact> facts) {
+    return kr::voxelize_request(opt_, facts);
+  });
 }
 
 bool SimaPillarScatter::compile_node_contract(const ContractCompileInput& input,
                                               CompiledNodeContract* out, std::string* error) const {
-  try {
-    std::optional<CompiledRuntimeContract> ingress;
-    const auto& upstream = resolve_inputs(input, kind(), ingress);
-    const auto facts =
-        bev_tensor_facts(upstream, ingress ? nullptr : input.immediate_upstream, kind());
-    const auto plan = kr::pillar_scatter_request(opt_, facts);
-    return compile_bev_contract(kind(), element_names(input.node_index).front(),
-                                contract_definition(), upstream, ingress.has_value(), plan, out,
-                                error);
-  } catch (const std::exception& exception) {
-    if (error)
-      *error = exception.what();
-    return false;
-  }
+  return compile_kernel_node(*this, input, out, error, [&](std::span<const TensorFact> facts) {
+    return kr::pillar_scatter_request(opt_, facts);
+  });
 }
 
 bool SimaBEVPoolPlan::compile_node_contract(const ContractCompileInput& input,
                                             CompiledNodeContract* out, std::string* error) const {
-  try {
-    std::optional<CompiledRuntimeContract> ingress;
-    const auto& upstream = resolve_inputs(input, kind(), ingress);
-    const auto facts =
-        bev_tensor_facts(upstream, ingress ? nullptr : input.immediate_upstream, kind());
-    const auto plan = kr::bev_pool_plan_request(opt_, facts);
-    return compile_bev_contract(kind(), element_names(input.node_index).front(),
-                                contract_definition(), upstream, ingress.has_value(), plan, out,
-                                error);
-  } catch (const std::exception& exception) {
-    if (error)
-      *error = exception.what();
-    return false;
-  }
+  return compile_kernel_node(*this, input, out, error, [&](std::span<const TensorFact> facts) {
+    return kr::bev_pool_plan_request(opt_, facts);
+  });
 }
 
+// Reads the producer's logical view in place: an MLA output whose slice stage
+// drops padded channels arrives as its strided [N,h,w,C] view, not a copy.
 bool ResizeArgMax::compile_node_contract(const ContractCompileInput& input,
                                          CompiledNodeContract* out, std::string* error) const {
-  try {
-    std::optional<CompiledRuntimeContract> ingress;
-    const auto& upstream = resolve_inputs(input, kind(), ingress);
-    // Reads the producer's logical view in place: an MLA output whose slice stage
-    // drops padded channels arrives as its strided [N,h,w,C] view, not a copy.
-    const auto facts =
-        bev_tensor_facts(upstream, ingress ? nullptr : input.immediate_upstream, kind());
-    const auto plan = kr::resize_argmax_request(opt_, facts);
-    return compile_bev_contract(kind(), element_names(input.node_index).front(),
-                                contract_definition(), upstream, ingress.has_value(), plan, out,
-                                error);
-  } catch (const std::exception& exception) {
-    if (error)
-      *error = exception.what();
-    return false;
-  }
+  return compile_kernel_node(*this, input, out, error, [&](std::span<const TensorFact> facts) {
+    return kr::resize_argmax_request(opt_, facts);
+  });
 }
 
 bool SimaBEVPool::compile_node_contract(const ContractCompileInput& input,
                                         CompiledNodeContract* out, std::string* error) const {
-  try {
-    std::optional<CompiledRuntimeContract> ingress;
-    const auto& upstream = resolve_inputs(input, kind(), ingress);
-    const auto facts =
-        bev_tensor_facts(upstream, ingress ? nullptr : input.immediate_upstream, kind());
-    const auto plan = kr::bev_pool_request(opt_, facts);
-    return compile_bev_contract(kind(), element_names(input.node_index).front(),
-                                contract_definition(), upstream, ingress.has_value(), plan, out,
-                                error);
-  } catch (const std::exception& exception) {
-    if (error)
-      *error = exception.what();
-    return false;
-  }
+  return compile_kernel_node(*this, input, out, error, [&](std::span<const TensorFact> facts) {
+    return kr::bev_pool_request(opt_, facts);
+  });
+}
+
+bool Kernel::compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
+                                   std::string* error) const {
+  return compile_kernel_node(*this, input, out, error, [&](std::span<const TensorFact> facts) {
+    return kr::kernel_request(opt_, facts);
+  });
 }
 
 } // namespace simaai::neat

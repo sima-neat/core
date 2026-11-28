@@ -1130,6 +1130,19 @@ if (NOT resize_argmax_ev_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_tests_properties(resize_argmax_ev_test PROPERTIES TIMEOUT 180)
 endif()
 
+# Public Kernel Node correctness on the A65: a built-in operation and providers
+# loaded at runtime. Kernels loads every SIMA_KERNEL_PATH provider before the
+# test's own, so an inherited search path is dropped.
+add_pipeline_test(sima_kernel_node_a65_test
+  SOURCES e2e_testing/sima_kernel_node_test.cpp LOCK_ACCELERATOR)
+if (NOT sima_kernel_node_a65_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  target_compile_definitions(sima_kernel_node_a65_test PRIVATE SIMA_BEVFUSION_TARGET_A65=1)
+  set_property(TEST sima_kernel_node_a65_test APPEND PROPERTY LABELS
+    "e2e;kernel;a65;customer_api;kernel-runner;modalix-only")
+  set_tests_properties(sima_kernel_node_a65_test PROPERTIES TIMEOUT 180
+    ENVIRONMENT_MODIFICATION SIMA_KERNEL_PATH=unset:)
+endif()
+
 add_pipeline_test(kernel_runner_public_cast_test
   SOURCES e2e_testing/kernel_runner_public_cast_test.cpp
   ARGS native LOCK_ACCELERATOR)

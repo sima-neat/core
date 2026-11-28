@@ -1,11 +1,12 @@
-// SimaVoxelize, SimaPillarScatter, SimaBEVPoolPlan, SimaBEVPool and ResizeArgMax
-// Nodes: deterministic fragments, option validation, cold Scheduler admission of
-// the production requests on A65 and EV74, and the stage contract each Node
-// compiles from an ingress Sample or a producer contract. The request builders
+// SimaVoxelize, SimaPillarScatter, SimaBEVPoolPlan, SimaBEVPool, ResizeArgMax and
+// Kernel Nodes: deterministic fragments, option validation, cold Scheduler
+// admission of the production requests on A65 and EV74, and the stage contract
+// each Node compiles from an ingress Sample or a producer contract. The request builders
 // themselves are covered without any runtime by unit_bevfusion_kernel_requests_test.
 //
 // Admission needs the published Scheduler cohort to expose voxelize,
 // pillar_scatter, bev_pool_plan, bev_pool and resize_argmax from its Kernels provider.
+#include "nodes/sima/Kernel.h"
 #include "nodes/sima/SimaBEVPool.h"
 #include "nodes/sima/SimaArgMax.h"
 #include "nodes/sima/SimaBEVPoolPlan.h"
@@ -92,6 +93,8 @@ void fragments_and_definitions() {
        "resize_argmax",
        {"scores"},
        {"class_map"}},
+      // Its ports follow the upstream tensors and the request, not the options.
+      {nodes::Kernel({.operation = "argmax"}), "Kernel", "kernel", {}, {}},
   };
   for (const auto& e : nodes) {
     require(e.node->kind() == e.kind, e.kind + " kind");
@@ -164,6 +167,25 @@ void fragments_and_definitions() {
       "SimaBEVPool: output_dtype", "SimaBEVPool rejects an FP32 bev");
   require_throws([] { ResizeArgMax node({.output_width = 0, .output_height = 512}); },
                  "ResizeArgMax: output_width", "ResizeArgMax rejects an empty class map");
+  require_throws([] { Kernel node({}); }, "Kernel: operation must name",
+                 "Kernel rejects an unnamed operation");
+  require_throws([] { Kernel node({.operation = "argmax", .library = ""}); },
+                 "Kernel: library, when set", "Kernel rejects an empty library path");
+  require_throws(
+      [] { Kernel node({.operation = "argmax", .outputs = std::vector<KernelOutputSpec>{}}); },
+      "Kernel: outputs, when set", "Kernel rejects an empty output list");
+  require_throws(
+      [] {
+        Kernel node({.operation = "argmax",
+                     .outputs = std::vector<KernelOutputSpec>{{{4}, TensorDType::Float64}}});
+      },
+      "Kernel: output dtype", "Kernel rejects an FP64 output");
+  require_throws(
+      [] {
+        Kernel node({.operation = "argmax",
+                     .outputs = std::vector<KernelOutputSpec>{{{0, 4}, TensorDType::Int32}}});
+      },
+      "Kernel: tensor has a nonpositive extent", "Kernel rejects an empty output");
 }
 
 // --------------------------------------------------------------------------
@@ -278,6 +300,40 @@ void scheduler_admission() {
       require_contains(error->field, "outputs[0]", "plan rejection must concern output capacity");
     }
   }
+}
+
+// --------------------------------------------------------------------------
+// Kernel requests for a built-in operation (providers: sima_kernel_node_a65_test)
+// --------------------------------------------------------------------------
+void kernel_requests() {
+  KernelOptions options{.operation = "argmax",
+                        .parameters = {{"axis", std::int64_t{-1}}, {"keepdims", false}},
+                        .outputs = std::vector<KernelOutputSpec>{{{1, 4, 4}, TensorDType::Int32}}};
+  const std::array dense{fact({1, 4, 4, 8}, rt::DType::Float32)};
+  const auto plan = kr::kernel_request(options, dense);
+  require(plan.operation == "argmax" && plan.target == rt::Target::A65, "Kernel request identity");
+  require(plan.inputs == std::vector<rt::TensorSpec>{{{1, 4, 4, 8}, rt::DType::Float32}} &&
+              plan.outputs == std::vector<rt::TensorSpec>{{{1, 4, 4}, rt::DType::Int32}},
+          "Kernel request tensors");
+  require(plan.published.size() == 1 && plan.published[0].name == "output0" &&
+              plan.published[0].shape == std::vector<std::int64_t>{1, 4, 4} &&
+              plan.published[0].stride_bytes.empty() && !plan.published[0].tiled,
+          "Kernel publishes dense output0");
+  require(plan.parameters.size() == 2 && plan.parameters[0].name == "axis" &&
+              plan.parameters[1].name == "keepdims",
+          "Kernel forwards parameters in order");
+  admit(plan, "Kernel argmax");
+
+  // A strided upstream view is forwarded as its view, not silently densified.
+  const std::array strided{fact({1, 4, 4, 8}, rt::DType::Float32, {1024, 256, 64, 4})};
+  const auto view = kr::kernel_request(options, strided);
+  require(std::holds_alternative<rt::Strided>(view.inputs[0].layout),
+          "Kernel forwards a strided input view");
+
+  options.outputs.reset();
+  require_throws([&] { kr::kernel_request(options, dense); },
+                 "argmax: has no output inference; pass outputs",
+                 "Kernel needs outputs for a built-in operation");
 }
 
 // --------------------------------------------------------------------------
@@ -892,6 +948,7 @@ int main() {
   try {
     fragments_and_definitions();
     scheduler_admission();
+    kernel_requests();
     ingress_contracts();
     semantic_contracts();
     resize_argmax_contracts();

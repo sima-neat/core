@@ -8,7 +8,10 @@
 // runtime state is involved, so the exact request Core forwards is testable in
 // isolation. Numerical admission remains the kernels provider's: these builders
 // only derive tensor specifications from the upstream contract and the options.
+// The generic Kernel Node's builder is the one exception: it loads the provider
+// library it names and asks the provider catalogue for output inference.
 
+#include "nodes/sima/Kernel.h"
 #include "nodes/sima/ResizeArgMax.h"
 #include "nodes/sima/SimaBEVPool.h"
 #include "nodes/sima/SimaBEVPoolPlan.h"
@@ -76,6 +79,11 @@ KernelRequestPlan bev_pool_plan_request(const SimaBEVPoolPlanOptions&, std::span
 KernelRequestPlan bev_pool_request(const SimaBEVPoolOptions&, std::span<const TensorFact>);
 /// One `[h,w,C]` or `[N,h,w,C]` score tensor -> one dense class map `[H,W]` or `[N,H,W]`.
 KernelRequestPlan resize_argmax_request(const ResizeArgMaxOptions&, std::span<const TensorFact>);
+/// Any operation: inputs from the facts, outputs stated or inferred by the operation's provider,
+/// published as `output0`, `output1`, ... Loads `library` first, when set. Throws
+/// std::invalid_argument prefixed with the operation, or std::runtime_error when the library
+/// cannot be loaded.
+KernelRequestPlan kernel_request(const KernelOptions&, std::span<const TensorFact>);
 
 /// Worst-case plan bytes for `cameras` cameras, from the kernels' published plan layouts.
 std::uint64_t bev_pool_plan_capacity_bytes(const SimaBEVPoolPlanOptions&, std::int64_t cameras);
@@ -86,6 +94,7 @@ void validate(const SimaPillarScatterOptions&);
 void validate(const SimaBEVPoolPlanOptions&);
 void validate(const SimaBEVPoolOptions&);
 void validate(const ResizeArgMaxOptions&);
+void validate(const KernelOptions&);
 
 rt::Target kernel_target(SimaKernelTarget);
 const char* rounding_name(SimaQuantRounding);

@@ -1,12 +1,17 @@
 #include "nodes/sima/internal/LidarBevKernelRequests.h"
 
+#include <simaai/scheduler/client/kernel.h>
+
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
+#include <variant>
 
 namespace simaai::neat::nodes_internal::kernel_requests {
 namespace {
@@ -689,6 +694,139 @@ KernelRequestPlan resize_argmax_request(const ResizeArgMaxOptions& opt,
   published.name = "class_map";
   published.shape = std::move(shape);
   plan.published = {std::move(published)};
+  return plan;
+}
+
+namespace {
+// Core element types the kernels library represents; Float64 has none.
+rt::DType kernel_dtype(TensorDType dtype, const char* node) {
+  switch (dtype) {
+  case TensorDType::UInt8:
+    return rt::DType::UInt8;
+  case TensorDType::Int8:
+    return rt::DType::Int8;
+  case TensorDType::UInt16:
+    return rt::DType::UInt16;
+  case TensorDType::Int16:
+    return rt::DType::Int16;
+  case TensorDType::Int32:
+    return rt::DType::Int32;
+  case TensorDType::BFloat16:
+    return rt::DType::BFloat16;
+  case TensorDType::Float32:
+    return rt::DType::Float32;
+  case TensorDType::Float64:
+    break;
+  }
+  fail(node, "output dtype has no kernels-library element type");
+}
+
+rt::Parameter kernel_parameter(const KernelParameter& parameter) {
+  return std::visit(
+      [&](const auto& value) -> rt::Parameter {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, std::vector<std::int64_t>> ||
+                      std::is_same_v<T, std::vector<double>>)
+          return {parameter.name, rt::ParameterArray(value.begin(), value.end())};
+        else
+          return {parameter.name, value};
+      },
+      parameter.value);
+}
+
+// A dense input is contiguous; any other is forwarded as its strided view, and
+// the operation decides whether it can read it.
+rt::TensorSpec kernel_input(const TensorFact& fact, std::size_t index, const char* node) {
+  rt::TensorSpec spec{fact.shape, fact.dtype};
+  if (dense(fact, node))
+    return spec;
+  const auto port = "input" + std::to_string(index);
+  rt::Strided layout;
+  if (fact.stride_bytes.size() != fact.shape.size())
+    fail(node, port + " strides do not match its rank");
+  if (fact.stride_bytes.size() > layout.strides_bytes.size())
+    fail(node, port + " has more strided axes than a kernel request represents");
+  std::copy(fact.stride_bytes.begin(), fact.stride_bytes.end(), layout.strides_bytes.begin());
+  spec.layout = layout;
+  return spec;
+}
+
+std::string describe(const std::vector<rt::TensorSpec>& specs) {
+  std::string text;
+  for (const auto& spec : specs)
+    text += (text.empty() ? "" : ", ") + describe(spec.shape) + " " + dtype_token(spec.dtype) +
+            (std::holds_alternative<rt::Contiguous>(spec.layout) ? "" : " non-dense");
+  return "{" + text + "}";
+}
+
+// Built-in operations, and provider operations without it, have no output inference.
+bool lacks_inference(const rt::Error& error) {
+  return error.kernel_code == rt::ProviderErrorCode::InvalidOperation &&
+         error.field == "infer_outputs";
+}
+} // namespace
+
+void validate(const KernelOptions& opt) {
+  constexpr const char* node = "Kernel";
+  if (opt.operation.empty())
+    fail(node, "operation must name a kernels-library operation");
+  if (opt.library && opt.library->empty())
+    fail(node, "library, when set, must be a provider library path");
+  if (opt.outputs) {
+    if (opt.outputs->empty())
+      fail(node, "outputs, when set, must state at least one tensor");
+    for (const auto& output : *opt.outputs)
+      checked_tensor_bytes(output.shape, kernel_dtype(output.dtype, node), node);
+  }
+}
+
+KernelRequestPlan kernel_request(const KernelOptions& opt, std::span<const TensorFact> facts) {
+  validate(opt);
+  // Loading first lets a provider's operation resolve below.
+  if (opt.library)
+    ::simaai::neat::load_kernel_library(*opt.library);
+  const char* node = opt.operation.c_str();
+  KernelRequestPlan plan;
+  plan.operation = opt.operation;
+  plan.target = kernel_target(opt.target);
+  for (std::size_t index = 0; index < facts.size(); ++index)
+    plan.inputs.push_back(kernel_input(facts[index], index, node));
+  for (const auto& parameter : opt.parameters)
+    plan.parameters.push_back(kernel_parameter(parameter));
+
+  std::optional<std::vector<rt::TensorSpec>> stated;
+  if (opt.outputs) {
+    stated.emplace();
+    for (const auto& output : *opt.outputs)
+      stated->push_back({output.shape, kernel_dtype(output.dtype, node)});
+  }
+  auto inferred = ::simaai::scheduler::client::infer_kernel_outputs(plan.operation, plan.target,
+                                                                    plan.inputs, plan.parameters);
+  if (const auto* failure = std::get_if<rt::Error>(&inferred)) {
+    if (!lacks_inference(*failure))
+      fail(node, "output inference failed: " + failure->field + ": " + failure->message);
+    if (!stated)
+      fail(node, "has no output inference; pass outputs");
+    plan.outputs = std::move(*stated);
+  } else {
+    auto& outputs = std::get<std::vector<rt::TensorSpec>>(inferred);
+    if (stated && *stated != outputs)
+      fail(node, "stated outputs differ from the provider's inference: stated " +
+                     describe(*stated) + ", inferred " + describe(outputs));
+    plan.outputs = std::move(outputs);
+  }
+
+  for (std::size_t index = 0; index < plan.outputs.size(); ++index) {
+    const auto& output = plan.outputs[index];
+    const auto name = "output" + std::to_string(index);
+    if (!std::holds_alternative<rt::Contiguous>(output.layout))
+      fail(node, name + " is not dense; the Kernel Node publishes dense outputs only");
+    checked_tensor_bytes(output.shape, output.dtype, node);
+    PublishedOutput published;
+    published.name = name;
+    published.shape = output.shape;
+    plan.published.push_back(std::move(published));
+  }
   return plan;
 }
 

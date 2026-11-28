@@ -65,6 +65,7 @@
 #include "nodes/io/StillImageInput.h"
 #include "nodes/sima/SimaRender.h"
 #include "nodes/sima/SimaArgMax.h"
+#include "nodes/sima/Kernel.h"
 #include "nodes/sima/ResizeArgMax.h"
 #include "nodes/sima/SimaBEVPool.h"
 #include "nodes/sima/SimaBEVPoolPlan.h"
@@ -104,6 +105,7 @@
 #include <opencv2/imgproc.hpp>
 #endif
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -116,6 +118,7 @@
 #include <sstream>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 NB_MAKE_OPAQUE(simaai::neat::SampleAttributes);
@@ -287,6 +290,100 @@ std::optional<nlohmann::json> python_to_optional_json(nb::handle value) {
   if (value.is_none())
     return std::nullopt;
   return python_to_json(value);
+}
+
+// KernelOptions.parameters: a dict of bool, int, float, str, list[int] or list[float].
+simaai::neat::KernelParameter::Value kernel_parameter_value(const std::string& name,
+                                                            nb::handle value) {
+  if (PyBool_Check(value.ptr()))
+    return nb::cast<bool>(value);
+  if (PyLong_Check(value.ptr()))
+    return nb::cast<std::int64_t>(value);
+  if (PyFloat_Check(value.ptr()))
+    return nb::cast<double>(value);
+  if (PyUnicode_Check(value.ptr()))
+    return nb::cast<std::string>(value);
+  if (PyList_Check(value.ptr())) {
+    const auto items = nb::borrow<nb::list>(value);
+    const auto all = [&](auto is) {
+      for (auto item : items)
+        if (!is(item.ptr()))
+          return false;
+      return true;
+    };
+    if (all([](PyObject* item) { return PyLong_Check(item) && !PyBool_Check(item); }))
+      return nb::cast<std::vector<std::int64_t>>(value);
+    if (all([](PyObject* item) { return PyFloat_Check(item) != 0; }))
+      return nb::cast<std::vector<double>>(value);
+  }
+  throw nb::type_error(("KernelOptions.parameters['" + name +
+                        "'] must be bool, int, float, str, list[int] or list[float]")
+                           .c_str());
+}
+
+nb::dict kernel_parameters_to_python(const std::vector<simaai::neat::KernelParameter>& parameters) {
+  nb::dict out;
+  for (const auto& parameter : parameters)
+    out[nb::str(parameter.name.c_str())] =
+        std::visit([](const auto& value) { return nb::cast(value); }, parameter.value);
+  return out;
+}
+
+std::vector<simaai::neat::KernelParameter> kernel_parameters_from_python(const nb::dict& values) {
+  std::vector<simaai::neat::KernelParameter> parameters;
+  for (auto [key, value] : values) {
+    auto name = nb::cast<std::string>(key);
+    auto parsed = kernel_parameter_value(name, value);
+    parameters.push_back({std::move(name), std::move(parsed)});
+  }
+  return parameters;
+}
+
+// KernelOptions.outputs element types, by their Python names.
+constexpr std::array<std::pair<const char*, TensorDType>, 5> kKernelOutputDTypes{{
+    {"uint8", TensorDType::UInt8},
+    {"int8", TensorDType::Int8},
+    {"int32", TensorDType::Int32},
+    {"float32", TensorDType::Float32},
+    {"bfloat16", TensorDType::BFloat16},
+}};
+
+TensorDType kernel_output_dtype(const std::string& name) {
+  for (const auto& [token, dtype] : kKernelOutputDTypes)
+    if (name == token)
+      return dtype;
+  throw std::invalid_argument("KernelOptions.outputs dtype must be uint8, int8, int32, float32 "
+                              "or bfloat16, got " +
+                              name);
+}
+
+const char* kernel_output_dtype_name(TensorDType dtype) {
+  for (const auto& [token, value] : kKernelOutputDTypes)
+    if (dtype == value)
+      return token;
+  throw std::invalid_argument("KernelOptions.outputs holds a dtype without a Python name");
+}
+
+using KernelOutputTuple = std::pair<std::vector<std::int64_t>, std::string>;
+
+std::optional<std::vector<KernelOutputTuple>> kernel_outputs_to_python(
+    const std::optional<std::vector<simaai::neat::KernelOutputSpec>>& outputs) {
+  if (!outputs)
+    return std::nullopt;
+  std::vector<KernelOutputTuple> result;
+  for (const auto& output : *outputs)
+    result.emplace_back(output.shape, kernel_output_dtype_name(output.dtype));
+  return result;
+}
+
+std::optional<std::vector<simaai::neat::KernelOutputSpec>>
+kernel_outputs_from_python(const std::optional<std::vector<KernelOutputTuple>>& outputs) {
+  if (!outputs)
+    return std::nullopt;
+  std::vector<simaai::neat::KernelOutputSpec> result;
+  for (const auto& [shape, dtype] : *outputs)
+    result.push_back({shape, kernel_output_dtype(dtype)});
+  return result;
 }
 
 simaai::neat::genai::Json python_to_genai_json(nb::handle value) {
@@ -4095,6 +4192,32 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("output_storage", &simaai::neat::SimaBEVPoolOptions::output_storage)
       .def_rw("output_dtype", &simaai::neat::SimaBEVPoolOptions::output_dtype)
       .def_rw("target", &simaai::neat::SimaBEVPoolOptions::target);
+  nb::class_<simaai::neat::KernelOptions>(m, "KernelOptions")
+      .def(nb::init<>())
+      .def_rw("operation", &simaai::neat::KernelOptions::operation)
+      .def_rw("target", &simaai::neat::KernelOptions::target)
+      .def_prop_rw(
+          "parameters",
+          [](const simaai::neat::KernelOptions& options) {
+            return kernel_parameters_to_python(options.parameters);
+          },
+          [](simaai::neat::KernelOptions& options, const nb::dict& values) {
+            options.parameters = kernel_parameters_from_python(values);
+          },
+          "dict[str, bool | int | float | str | list[int] | list[float]]")
+      .def_prop_rw(
+          "outputs",
+          [](const simaai::neat::KernelOptions& options) {
+            return kernel_outputs_to_python(options.outputs);
+          },
+          [](simaai::neat::KernelOptions& options,
+             const std::optional<std::vector<KernelOutputTuple>>& outputs) {
+            options.outputs = kernel_outputs_from_python(outputs);
+          },
+          "list[tuple[list[int], str]] or None; dtypes uint8, int8, int32, float32, bfloat16")
+      .def_rw("library", &simaai::neat::KernelOptions::library);
+  m.def("load_kernel_library", &simaai::neat::load_kernel_library, "path"_a,
+        "Load a kernels provider library for the whole process; returns its operation names.");
   nb::enum_<simaai::neat::SimaEncodeType>(m, "SimaEncodeType")
       .value("H264", simaai::neat::SimaEncodeType::H264)
       .value("H265", simaai::neat::SimaEncodeType::H265)
@@ -4348,6 +4471,7 @@ NB_MODULE(_pyneat_core, m) {
   nodes_mod.def("sima_argmax", &simaai::neat::nodes::SimaArgMax,
                 "options"_a = simaai::neat::SimaArgMaxOptions{});
   nodes_mod.def("resize_argmax", &simaai::neat::nodes::ResizeArgMax, "options"_a);
+  nodes_mod.def("kernel", &simaai::neat::nodes::Kernel, "options"_a);
   nodes_mod.def("sima_voxelize", &simaai::neat::nodes::SimaVoxelize, "options"_a);
   nodes_mod.def("sima_pillar_scatter", &simaai::neat::nodes::SimaPillarScatter, "options"_a);
   nodes_mod.def("sima_bev_pool_plan", &simaai::neat::nodes::SimaBEVPoolPlan, "options"_a);
