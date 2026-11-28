@@ -7,12 +7,34 @@
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/TensorMath.h"
 
+#include <algorithm>
+#include <initializer_list>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 
 namespace simaai::neat::pipeline_internal {
 namespace {
+bool axes_match_layout(const Tensor& tensor, TensorLayout layout) {
+  if (tensor.axis_semantics.empty() || layout == TensorLayout::Unknown)
+    return true;
+  using Axis = TensorAxisSemantic;
+  const auto matches = [&](std::initializer_list<Axis> axes) {
+    return tensor.axis_semantics.size() == axes.size() &&
+           std::equal(tensor.axis_semantics.begin(), tensor.axis_semantics.end(), axes.begin());
+  };
+  switch (layout) {
+  case TensorLayout::HWC:
+    return matches({Axis::H, Axis::W, Axis::C}) || matches({Axis::N, Axis::H, Axis::W, Axis::C});
+  case TensorLayout::CHW:
+    return matches({Axis::C, Axis::H, Axis::W}) || matches({Axis::N, Axis::C, Axis::H, Axis::W});
+  case TensorLayout::HW:
+    return matches({Axis::H, Axis::W}) || matches({Axis::N, Axis::H, Axis::W});
+  default:
+    return false;
+  }
+}
+
 [[noreturn]] void reject(const std::string& detail) {
   error_util::throw_session_error(error_codes::kInputShape,
                                   "ordered tensor input contract: " + detail);
@@ -51,6 +73,15 @@ void validate_member(const PublicInputTensorSpec& expected, const Tensor& tensor
         tensor.layout == TensorLayout::HWC ? tensor.shape.size() - 1 : tensor.shape.size() - 3;
     layout_ok = tensor.shape[channel] == 1;
   }
+  // Explicit axes are assertions even when the public layout tag is Unknown.
+  // Validate the one-channel image alias against its original HWC/CHW axes.
+  const auto axis_layout =
+      expected.layout == TensorLayout::HW && tensor.layout != TensorLayout::Unknown
+          ? tensor.layout
+          : expected.layout;
+  if ((!tensor.axis_semantics.empty() && tensor.axis_semantics.size() != tensor.shape.size()) ||
+      !axes_match_layout(tensor, tensor.layout) || !axes_match_layout(tensor, axis_layout))
+    fail("logical layout conflicts with explicit axis semantics");
   if (!layout_ok ||
       !input_geometry_matches_logical_shape(geometry, expected.shape, expected.layout)) {
     const auto shape = [](const auto& dimensions) {

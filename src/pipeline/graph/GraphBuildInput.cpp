@@ -1856,6 +1856,10 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
       &br, &build_nodes, sess_opt, input_contract_from_input(sample), seed_spec,
       contract_compile_sample_from_input(sample), "Graph::build(input)");
   InputStreamOptions stream_opt = opt;
+  // Only the first effective consumer may constrain the application ingress.
+  // Context-dependent nodes author this after the seed has supplied its shape.
+  if (br.compiled_contracts && !br.compiled_contracts->stages.empty())
+    stream_opt.public_input_contract = br.compiled_contracts->stages.front().public_input_contract;
   // Execution and output ownership are independent: a completed frame may
   // remain retained by the application after its execution slot is reusable.
   br.kernel_runner_capacity =

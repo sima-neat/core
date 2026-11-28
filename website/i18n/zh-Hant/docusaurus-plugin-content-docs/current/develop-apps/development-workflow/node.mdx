@@ -377,6 +377,7 @@ run = graph.build()
 - [`Preproc`](/reference/nodes/preproc): 將 CVU 影像的預處理步驟整合，用於調整大小、色彩轉換、正規化、量化、鑲嵌，以及執行階段的 ROI 列表。
 - [`CameraInput`](/reference/nodes/camera-input)：來源端擁有的 MIPI/libcamera 幀，並採用自適應的 SiMaAI 記憶體傳遞機制，以供後續的 CVU/MLA 階段使用。
 - [`SimaBoxDecode`](/reference/boxdecode_decode_types)：一種偵測後處理方法，用於將模型輸出的結果解碼為邊界框，並使用上游預處理的元資料進行座標映射。
+- [`nodes::SimaGridSample2D`](/reference/cppapi/classes/simaai-neat-simagridsample2d) 使用 FP32 `(x, y)` 網格，在 A65 上對 NHWC 特徵進行取樣。每個影格都可以提供新的網格。
 
 <a id="boundary-nodes"></a>
 ## 邊界節點：`Input` 和 `Output`

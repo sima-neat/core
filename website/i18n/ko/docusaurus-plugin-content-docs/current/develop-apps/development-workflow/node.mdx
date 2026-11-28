@@ -365,6 +365,7 @@ run = graph.build()
 - [`Preproc`](/reference/nodes/preproc): 크기 조정, 색상 변환, 정규화, 양자화, 테셀레이션 및 런타임 ROI 목록을 위한 통합 CVU 이미지 전처리.
 - [`CameraInput`](/reference/nodes/camera-input): 소스에서 소유한 MIPI/libcamera 프레임으로, 후속 CVU/MLA 단계를 위해 적응형 SiMaAI 메모리 핸드오프를 수행합니다.
 - [`SimaBoxDecode`](/reference/boxdecode_decode_types): 모델 헤드를 바운딩 박스로 디코딩하고 상위 전처리 메타데이터를 사용하여 좌표 매핑을 수행하는 감지 후처리.
+- [`nodes::SimaGridSample2D`](/reference/cppapi/classes/simaai-neat-simagridsample2d)는 FP32 `(x, y)` 그리드를 사용하여 A65에서 NHWC 특징을 샘플링합니다. 프레임마다 새 그리드를 제공할 수 있습니다.
 
 <a id="boundary-nodes"></a>
 ## 경계 노드: `Input` 및 `Output`

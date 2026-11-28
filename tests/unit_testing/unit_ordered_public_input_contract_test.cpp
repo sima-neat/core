@@ -129,6 +129,23 @@ void metadata_contract() {
   }
   validate_ordered_public_input(batched, batch_sample);
   rejects([&] { validate_ordered_public_input(expected, batch_sample); }, "shape/layout");
+
+  // Explicit axes cannot disappear behind an Unknown layout token.
+  using Axis = TensorAxisSemantic;
+  const OrderedPublicInputContract nhwc{
+      {{"features", TensorDType::Float32, TensorLayout::HWC, {1, 3, 2, 1}}}};
+  auto features = Tensor::from_vector(std::vector<float>(6), {1, 3, 2, 1}, TensorMemory::CPU);
+  features.axis_semantics = {Axis::N, Axis::H, Axis::W, Axis::C};
+  validate_ordered_public_input(nhwc, features);
+  for (const auto layout : {TensorLayout::Unknown, TensorLayout::HWC}) {
+    features.layout = layout;
+    features.axis_semantics = {Axis::N, Axis::W, Axis::H, Axis::C};
+    rejects([&] { validate_ordered_public_input(nhwc, features); }, "axis semantics");
+  }
+  features.axis_semantics.clear();
+  features.layout = TensorLayout::Unknown;
+  validate_ordered_public_input(nhwc, features);
+  require(maps == 0, "axis validation mapped the payload");
 }
 
 void queue_contract() {

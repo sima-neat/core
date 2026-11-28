@@ -1118,6 +1118,23 @@ foreach(bevfusion_suite sima_voxelize:ev74 sima_voxelize:a65 sima_pillar_scatter
   endif()
 endforeach()
 
+# Public A65 GridSample2D, including all six comparison geometries, dynamic
+# grids and asynchronous retained outputs. The oracle preserves FP32 stages.
+add_pipeline_test(sima_grid_sample_2d_a65_test
+  SOURCES e2e_testing/sima_grid_sample_2d_test.cpp LOCK_ACCELERATOR)
+if (NOT sima_grid_sample_2d_a65_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  target_compile_options(sima_grid_sample_2d_a65_test PRIVATE -ffp-contract=off)
+  set_property(TEST sima_grid_sample_2d_a65_test APPEND PROPERTY LABELS
+    "e2e;a65;customer_api;kernel-runner;modalix-only")
+  set_tests_properties(sima_grid_sample_2d_a65_test PROPERTIES TIMEOUT 180)
+endif()
+
+# Manual timing with explicit saved input files and independent output checking.
+# This target has no CTest registration: MLA assets are supplied by the caller.
+add_executable(sima_grid_sample_pipeline_benchmark perf/grid_sample_pipeline_benchmark.cpp)
+target_link_libraries(sima_grid_sample_pipeline_benchmark PRIVATE sima_neat)
+target_compile_options(sima_grid_sample_pipeline_benchmark PRIVATE -ffp-contract=off)
+
 # Public ResizeArgMax correctness. The operation runs on the EV74 only; the
 # byte-exact reference needs no FMA contraction.
 add_pipeline_test(resize_argmax_ev_test

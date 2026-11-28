@@ -799,6 +799,7 @@ target_link_libraries(neat-dmabuf-plan-audit PRIVATE
   sima_neat
   sima_neat_internal_headers
 )
+add_dependencies(sima_neat_libraries neat-dmabuf-plan-audit)
 install(
   TARGETS neat-dmabuf-plan-audit
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}

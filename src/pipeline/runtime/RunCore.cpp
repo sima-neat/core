@@ -1649,9 +1649,9 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
     opt.tensor_input_opt_for_cv = pipeline_segment_ingress_input(segment);
   }
 
-  const auto public_contract = opt.input_route_processor
-                                   ? std::optional<pipeline_internal::OrderedPublicInputContract>{}
-                                   : segment.public_input_contract;
+  auto public_contract = opt.input_route_processor
+                             ? std::optional<pipeline_internal::OrderedPublicInputContract>{}
+                             : segment.public_input_contract;
   if (public_contract) {
     if (opt.seed)
       pipeline_internal::validate_ordered_public_input(*public_contract, *opt.seed);
@@ -1730,12 +1730,14 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
         ctx.mode == RunMode::Sync);
   }
   const auto input_stream_us = pipeline_internal::build_timing_us(input_stream_start);
+  if (!opt.input_route_processor && !public_contract)
+    public_contract = stream.public_input_contract();
   const auto start_single_start = pipeline_internal::build_timing_now();
   auto core = RunCore::start_single_pipeline(
       std::move(stream), ctx.merged_opt, build_stream_opt, ctx.mode, opt.tensor_input_opt_for_cv,
       std::move(opt.input_route_processor), std::move(opt.after_pipeline_start_for_test));
   core->push_sample_policy = opt.push_sample_policy;
-  core->pipeline.public_input_contract = public_contract;
+  core->pipeline.public_input_contract = std::move(public_contract);
   core->pipeline.loan_stall_label = "graph segment " + std::to_string(segment.id);
   const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
   pipeline_internal::emit_build_timing("RunCore::start_pipeline_segment",

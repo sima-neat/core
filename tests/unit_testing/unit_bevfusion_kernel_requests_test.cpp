@@ -806,6 +806,58 @@ void resize_argmax_request() {
                  "resize_argmax rejects a negative output height");
 }
 
+void grid_sample_request() {
+  using Facts = std::array<kr::TensorFact, 2>;
+  for (const auto dtype : {rt::DType::Float32, rt::DType::BFloat16}) {
+    Facts facts{fact({2, 5, 7, 17}, dtype), fact({2, 23, 11, 2}, rt::DType::Float32)};
+    for (const auto padding : {SimaGridSample2DPadding::Zeros, SimaGridSample2DPadding::Border})
+      for (bool align : {false, true}) {
+        const auto plan = kr::grid_sample_2d_request({padding, align}, facts);
+        require(plan.operation == "grid_sample_2d" && plan.target == rt::Target::A65,
+                "GridSample A65 request identity");
+        require(plan.inputs.size() == 2 && plan.inputs[0].shape == facts[0].shape &&
+                    plan.inputs[1].shape == facts[1].shape &&
+                    plan.inputs[1].dtype == rt::DType::Float32,
+                "GridSample feature/grid inputs");
+        require(plan.outputs.size() == 1 &&
+                    plan.outputs[0].shape == std::vector<std::int64_t>{2, 23, 11, 17} &&
+                    plan.outputs[0].dtype == dtype && plan.published[0].layout == "NHWC" &&
+                    plan.published[0].name == "sampled" && !plan.published[0].quant,
+                "GridSample derives output geometry from grid and channels from features");
+        require(scalar<std::string>(plan, "padding") ==
+                        (padding == SimaGridSample2DPadding::Zeros ? "zeros" : "border") &&
+                    scalar<bool>(plan, "align_corners") == align,
+                "GridSample forwards numerical options");
+      }
+  }
+  const Facts good{fact({1, 5, 7, 17}, rt::DType::BFloat16),
+                   fact({1, 23, 11, 2}, rt::DType::Float32)};
+  auto reject = [&](const std::function<void(Facts&)>& modify, const std::string& diagnostic) {
+    auto bad = good;
+    modify(bad);
+    require_throws([&] { kr::grid_sample_2d_request({}, bad); }, diagnostic,
+                   "GridSample malformed input");
+  };
+  reject([](auto& f) { f[0].layout = "CHW"; }, "channels-last");
+  reject([](auto& f) { f[0].dtype = rt::DType::Float16; }, "FP32 or BF16");
+  reject([](auto& f) { f[1].dtype = rt::DType::BFloat16; }, "grid must be FP32");
+  reject([](auto& f) { f[1].shape = {23, 11, 2}; }, "rank four");
+  reject([](auto& f) { f[1].shape[0] = 2; }, "feature batch size");
+  reject([](auto& f) { f[1].shape[3] = 3; }, "[N,Ho,Wo,2]");
+  reject([](auto& f) { f[0].shape[1] = 0; }, "nonpositive");
+  reject([](auto& f) { f[0].stride_bytes = {10000, 1000, 34, 2}; }, "must be dense");
+  reject([](auto& f) { f[1].quant = kr::Quantization{0.5, 0}; }, "unquantized");
+  require_throws([&] { kr::grid_sample_2d_request({}, std::span(good).first(1)); },
+                 "expects 2 input tensors", "GridSample requires both inputs");
+  require_throws(
+      [&] { kr::grid_sample_2d_request({static_cast<SimaGridSample2DPadding>(99)}, good); },
+      "padding must be", "GridSample padding enum");
+  auto dense = good;
+  dense[0].stride_bytes = {1190, 238, 34, 2};
+  dense[1].stride_bytes = {2024, 88, 8, 4};
+  kr::grid_sample_2d_request({}, dense);
+}
+
 int main() {
   try {
     voxelize_request();
@@ -820,6 +872,7 @@ int main() {
     bf16_reference_known_answers();
     published_quantization();
     resize_argmax_request();
+    grid_sample_request();
   } catch (const std::exception& error) {
     std::cerr << "[FAIL] unit_bevfusion_kernel_requests_test: " << error.what() << "\n";
     return 1;
