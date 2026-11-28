@@ -162,9 +162,11 @@ void rejections() {
   auto no_channels = c.options;
   no_channels.format = neat::SimaBEVPoolPlanFormat::V2;
   bt::expect_rejected(node(no_channels), bt::calibration_tensors(c.calibration),
-                      "bev_pool_plan admission failed: params.context_channels: BEVPoolPlan format "
-                      "2 needs 1..1024 context channels",
+                      "SimaBEVPoolPlan: format V2 (the default) needs context_channels",
                       "format 2 without context_channels");
+  bt::expect_rejected(node(no_channels), bt::calibration_tensors(c.calibration),
+                      neat::error_codes::kKernelRequest,
+                      "format 2 without context_channels is a kernel-request error");
   auto ev74 = c.options;
   ev74.target = neat::SimaKernelTarget::EV74;
   bt::expect_rejected(node(ev74), bt::calibration_tensors(c.calibration),

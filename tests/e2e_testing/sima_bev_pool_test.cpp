@@ -310,6 +310,15 @@ void rejections() {
   auto missing = inputs(c);
   missing.pop_back();
   bt::expect_rejected(node(c.options), missing, "expects 3 input tensors", "missing plan");
+  // An explicit plan_format that the build's plan header contradicts is a
+  // kernel-request error at Graph::build, not a kernel fault at run (core#1528).
+  auto conflict = c.options;
+  conflict.plan_format = neat::SimaBEVPoolPlanFormat::V2;
+  bt::expect_rejected(node(conflict), inputs(c),
+                      "plan_format is V2 but the plan header records format V1",
+                      "V1 plan with plan_format V2");
+  bt::expect_rejected(node(conflict), inputs(c), neat::error_codes::kKernelRequest,
+                      "V1 plan with plan_format V2 is a kernel-request error");
   if (bt::on_ev74()) {
     // EV74 admits only channels-last context and bev; there is no A65 fallback.
     const auto contiguous = int8_case(Storage::Contiguous, Storage::Contiguous);

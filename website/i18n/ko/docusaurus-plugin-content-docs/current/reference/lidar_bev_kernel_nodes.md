@@ -84,13 +84,24 @@ Python에서도 같은 옵션 형식과 `pyneat.nodes.sima_voxelize`,
   양자화가 0.0에 할당하는 INT8 코드여야 합니다. INT8 캔버스 바이트는 조밀한 NHWC
   순서입니다.
 - **SimaBEVPoolPlan**은 절두체(`xs`, `ys`, `ds`)와 격자(`bx`, `dx`, `nx`)를
-  체크포인트의 뷰 변환에서 가져옵니다. 기본값인 `SimaBEVPoolPlanFormat::V1`은 점을
-  BEV 셀별로 묶습니다. EV74 `SimaBEVPool`에는 `context_channels`와 함께
-  `SimaBEVPoolPlanFormat::V2`를 사용합니다. 기본적으로 `P`는 최악의 경우 계획 크기이며,
-  계획이 사용한 길이를 넘는 바이트는 쓰지 않습니다.
+  체크포인트의 뷰 변환에서 가져옵니다. 기본값인 `SimaBEVPoolPlanFormat::V2`는 캐시
+  로드를 계획한 작업 타일에 점을 배치합니다. A65에서 더 빠르게 풀링하고 EV74의 유일한
+  빠른 경로이며, `context_channels`(소비하는 `SimaBEVPool` 컨텍스트의 채널 수 `C`)가
+  필요합니다. 지정하지 않으면 빌드가 `misconfig.kernel_request`로 실패합니다. `C`를
+  전달하는 그래프 입력이 없으므로 직접 설정하세요. 점을 BEV 셀별로 묶는
+  `SimaBEVPoolPlanFormat::V1`은 매 프레임 계획을 다시 만드는 A65 파이프라인(V1 생성이
+  약 2배 빠름)이거나, 형상이 V2 한도를 넘는다고 승인 단계가 보고할 때만 선택하세요.
+  기본적으로 `P`는 최악의 경우 계획 크기이며, 계획이 사용한 길이를 넘는 바이트는
+  쓰지 않습니다.
 - **SimaBEVPool**은 각 셀의 계획 점에 대해 `depth x context`를 합하고, 그 합을
-  `quantization`으로 양자화합니다. `cells`는 계획의 `nx`로, `plan_format`은 계획의
-  `format`으로, INT8 입력이면 `quantization.multiplier`를
+  `quantization`으로 양자화합니다. `cells`는 계획의 `nx`로 설정합니다. `plan_format`은
+  설정하지 마세요. 빌드 입력 텐서에 계획이 있으면 노드는 `SimaBEVPoolPlan`이 쓴 계획
+  헤더가 기록한 형식을, 없으면 `V2`를 사용하므로 `SimaBEVPoolPlan`에서 `V1`을 고르는
+  것으로 충분합니다. 계획 헤더와 모순되는 명시적 `plan_format`은 두 형식을 모두 밝히며
+  `misconfig.kernel_request`로 빌드가 실패합니다. 실행 중 처음 전달되는 계획은 노드의
+  형식이어야 하며, 다른 형식의 계획은 출력을 쓰기 전에 거부됩니다(A65에서는
+  `misconfig.kernel_request`, EV74는 실행 실패만 보고). INT8 입력이면
+  `quantization.multiplier`를
   `depth_scale * context_scale / output_scale`로 설정합니다. 기본값인
   `SimaBEVPoolStorage::ChannelsLast`에서는 입력이 카메라 모델이 출력하는 그대로
   `[N,fH,fW,D]`와 `[N,fH,fW,C]`로 들어옵니다. 출력은 채널 마지막(channels-last)

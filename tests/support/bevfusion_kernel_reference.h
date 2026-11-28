@@ -460,6 +460,8 @@ inline BEVPoolPlanCase bev_pool_plan_case() {
   o.bx = {0.5f, 0.5f, 0.0f};
   o.dx = {1.0f, 1.0f, 8.0f};
   o.nx = {4, 4, 1};
+  // The reference plan below implements format 1; V2 is the Node default.
+  o.format = SimaBEVPoolPlanFormat::V1;
   Matrix4 k = identity();
   k[0] = 2;
   k[2] = 1; // fx = 2, cx = 1

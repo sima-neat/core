@@ -593,6 +593,8 @@ struct PipelineElementSpec {
 struct ManifestBuildDiagnostics {
   std::vector<std::string> warnings;
   std::vector<std::string> errors;
+  // The first failed stage's specific code; empty selects misconfig.pipeline_shape.
+  std::string error_code;
 };
 
 /// Parse a GStreamer launch string into a list of `PipelineElementSpec`s.

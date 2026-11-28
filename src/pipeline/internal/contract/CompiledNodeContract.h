@@ -37,6 +37,9 @@ struct CompiledNodeContract {
   std::optional<CompiledTransportContract> transport;
   std::vector<CompiledNodeContract> child_stages;
   bool renderable = false;
+  // Set by a provider whose compile failure has a more specific code than the
+  // default pipeline-shape refusal (for example misconfig.kernel_request).
+  std::string failure_error_code;
 };
 
 struct CompiledPipelineContracts {

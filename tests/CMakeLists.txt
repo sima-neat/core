@@ -656,6 +656,7 @@ set(UNIT_TESTS
   unit_sima_plugins_test
   unit_bevfusion_kernel_requests_test
   unit_bevfusion_kernel_nodes_test
+  unit_bev_pool_plan_format_regression_test
   unit_internal_edge_contract_resolver_test
   unit_terminal_output_contract_query_test
   unit_tensor_set_meta_route_contract_test
@@ -751,7 +752,8 @@ target_link_libraries(unit_mpk_decoder_test PRIVATE
 
 # BEVFusion/PointPillars kernel Nodes. The references are exact only without FMA
 # contraction. Node admission needs the Scheduler set that bundles the pinned Kernels.
-foreach(_target unit_bevfusion_kernel_requests_test unit_bevfusion_kernel_nodes_test)
+foreach(_target unit_bevfusion_kernel_requests_test unit_bevfusion_kernel_nodes_test
+                unit_bev_pool_plan_format_regression_test)
   if (TARGET ${_target})
     target_compile_options(${_target} PRIVATE -ffp-contract=off)
     set_property(TEST ${_target} APPEND PROPERTY LABELS "contracts")
@@ -759,6 +761,9 @@ foreach(_target unit_bevfusion_kernel_requests_test unit_bevfusion_kernel_nodes_
 endforeach()
 if (TARGET unit_bevfusion_kernel_nodes_test)
   target_link_libraries(unit_bevfusion_kernel_nodes_test PRIVATE SimaScheduler::frontend)
+endif()
+if (TARGET unit_bev_pool_plan_format_regression_test)
+  target_link_libraries(unit_bev_pool_plan_format_regression_test PRIVATE SimaScheduler::frontend)
 endif()
 
 target_sources(unit_output_metadata_cache_contract_test
@@ -1094,9 +1099,11 @@ endforeach()
 
 # Public BEVFusion/PointPillars kernel correctness: one complete scenario matrix
 # per kernel and target. A suite source is built once per target it runs on;
-# SimaBEVPoolPlan exists on A65 only. Byte-exact references need no FMA contraction.
+# SimaBEVPoolPlan exists on A65 only, so does the joined V1 plan suite. Byte-exact
+# references need no FMA contraction.
 foreach(bevfusion_suite sima_voxelize:ev74 sima_voxelize:a65 sima_pillar_scatter:ev74
-    sima_pillar_scatter:a65 sima_bev_pool_plan:a65 sima_bev_pool:ev74 sima_bev_pool:a65)
+    sima_pillar_scatter:a65 sima_bev_pool_plan:a65 sima_bev_pool:ev74 sima_bev_pool:a65
+    sima_bev_pool_joined_plan:a65)
   string(REPLACE ":" ";" bevfusion_parts "${bevfusion_suite}")
   list(GET bevfusion_parts 0 bevfusion_kernel)
   list(GET bevfusion_parts 1 bevfusion_target)

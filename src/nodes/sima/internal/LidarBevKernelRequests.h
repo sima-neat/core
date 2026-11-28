@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -67,12 +68,36 @@ struct KernelRequestPlan {
   std::vector<PublishedOutput> published; ///< One per output, same order.
 };
 
+/// A request the Node's options cannot form for the kernel, as opposed to an
+/// upstream tensor the Node cannot accept. Graph::build reports it as
+/// misconfig.kernel_request; other builder refusals stay pipeline-shape errors.
+struct KernelRequestError : std::invalid_argument {
+  using std::invalid_argument::invalid_argument;
+};
+
+/// The format a BEV pool plan's first eight bytes record: little-endian u32
+/// words "BVPL" (0x4C505642) and the version, 1 or 2. Nullopt for anything else,
+/// so an unrecognised plan is left to the kernel.
+std::optional<SimaBEVPoolPlanFormat>
+bev_pool_plan_header_format(std::span<const std::uint8_t> prefix);
+
+/// The plan format SimaBEVPool requests: the declared one, else the plan's own,
+/// else V2. Throws KernelRequestError naming both formats when both are known and
+/// differ; `plan_format_source` leads into the plan's format in that message
+/// (for example "the plan header records format").
+SimaBEVPoolPlanFormat resolve_bev_pool_plan_format(std::optional<SimaBEVPoolPlanFormat> declared,
+                                                   std::optional<SimaBEVPoolPlanFormat> plan,
+                                                   const std::string& plan_format_source);
+
 // Each builder throws std::invalid_argument, prefixed with the Node kind, when
-// the upstream tensors cannot form the operation's request.
+// the upstream tensors cannot form the operation's request (KernelRequestError
+// when the options cannot).
 KernelRequestPlan voxelize_request(const SimaVoxelizeOptions&, std::span<const TensorFact>);
 KernelRequestPlan pillar_scatter_request(const SimaPillarScatterOptions&,
                                          std::span<const TensorFact>);
 KernelRequestPlan bev_pool_plan_request(const SimaBEVPoolPlanOptions&, std::span<const TensorFact>);
+/// Requests the options' plan_format, V2 when unset; resolve it first
+/// (resolve_bev_pool_plan_format) when the plan's own format is known.
 KernelRequestPlan bev_pool_request(const SimaBEVPoolOptions&, std::span<const TensorFact>);
 /// One `[h,w,C]` or `[N,h,w,C]` score tensor -> one dense class map `[H,W]` or `[N,H,W]`.
 KernelRequestPlan resize_argmax_request(const ResizeArgMaxOptions&, std::span<const TensorFact>);

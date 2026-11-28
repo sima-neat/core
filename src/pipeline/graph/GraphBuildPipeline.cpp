@@ -797,9 +797,12 @@ void prepare_stage_contracts(BuildResult& build, const char* where) {
     for (const auto& error : build.manifest_diagnostics.errors) {
       message << "\n  - " << error;
     }
+    const auto& code = build.manifest_diagnostics.error_code;
     session_build_throw_session_error_simple(
-        error_codes::kPipelineShape, message.str(),
-        "Supply the required input context and correct the reported stage contract.",
+        code.empty() ? error_codes::kPipelineShape : code.c_str(), message.str(),
+        code == error_codes::kKernelRequest
+            ? "Correct the reported Node options so they form a valid kernel request."
+            : "Supply the required input context and correct the reported stage contract.",
         build.pipeline_string);
   }
   const auto& pipeline_string = build.pipeline_string;

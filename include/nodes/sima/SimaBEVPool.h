@@ -17,6 +17,7 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -60,8 +61,11 @@ struct SimaBEVPoolOptions {
   std::array<int, 3> cells{}; ///< BEV cell counts `nX`, `nY`, `nZ`; must match the plan.
   int depth_zero_point = 0;   ///< INT8 zero point of `depth`; 0 for BF16.
   int context_zero_point = 0; ///< INT8 zero point of `context`; 0 for BF16.
-  /// Layout of the bound plan: the producing SimaBEVPoolPlan's `format`.
-  SimaBEVPoolPlanFormat plan_format = SimaBEVPoolPlanFormat::V1;
+  /// Layout of the bound plan. Leave unset to take the plan's own format: the header of a
+  /// plan in the build's input tensors, as SimaBEVPoolPlan writes it, and otherwise `V2`.
+  /// An explicit value that disagrees with that header is refused at build. A plan first
+  /// supplied at run time must have this format (or `V2` when unset).
+  std::optional<SimaBEVPoolPlanFormat> plan_format;
   /// Applied to each cell's binary32 sum for an INT8 `bev`. For INT8 inputs set
   /// `multiplier = depth_scale * context_scale / output_scale`; for BF16 inputs,
   /// `1 / output_scale`. A BF16 `bev` needs the identity.
